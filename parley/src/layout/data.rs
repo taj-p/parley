@@ -484,16 +484,54 @@ impl<B: Brush> LayoutData<B> {
                 index
             });
 
+        // TODO(taj): Why do we need self.fonts? And do we need to do this here? And should I store the font ref alongside the font?
+        let font = &self.fonts[font_index];
+        let font = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap(); // TODO(taj): Handle unwrap.
+
+        let (ascent, descent, leading, strikethrough_offset, strikethrough_size) =
+            // This copies harfrust's behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60)
+            // but it's unclear to me whether we should use os2 only if the appropriate fs selection "use os2 metrics" bit is set.
+            if let Ok(os2) = font.os2() {
+                (
+                    os2.s_typo_ascender(),
+                    os2.s_typo_descender(),
+                    os2.s_typo_line_gap(),
+                    os2.y_strikeout_position(),
+                    os2.y_strikeout_size(),
+                )
+            } else if let Ok(hhea) = font.hhea() {
+                (
+                    hhea.ascender().to_i16(),
+                    hhea.descender().to_i16(),
+                    hhea.line_gap().to_i16(),
+                    i16::default(),
+                    i16::default(),
+                )
+            } else {
+                todo!()
+            };
+
+        let units_per_em = font.head().unwrap().units_per_em();
+
+        let (underline_offset, underline_size) = if let Ok(post) = font.post() {
+            // TODO: What to do if these tables don't exist? Should we actually err?
+            (
+                post.underline_position().to_i16(),
+                post.underline_thickness().to_i16(),
+            )
+        } else {
+            (i16::default(), i16::default())
+        };
+
         // For now, create default metrics since we don't have them from harfrust
-        // TODO: Get actual metrics from the font
         let metrics = RunMetrics {
-            ascent: font_size * 0.8,
-            descent: font_size * 0.2,
-            leading: 0.0,
-            underline_offset: -font_size * 0.1,
-            underline_size: font_size * 0.05,
-            strikethrough_offset: font_size * 0.3,
-            strikethrough_size: font_size * 0.05,
+            ascent: font_size * ascent as f32 / units_per_em as f32,
+            descent: font_size * descent as f32 / units_per_em as f32,
+            leading: font_size * leading as f32 / units_per_em as f32,
+            underline_offset: font_size * underline_offset as f32 / units_per_em as f32,
+            underline_size: font_size * underline_size as f32 / units_per_em as f32,
+            strikethrough_offset: font_size * strikethrough_offset as f32 / units_per_em as f32,
+            strikethrough_size: font_size * strikethrough_size as f32 / units_per_em as f32,
         };
 
         let cluster_range = self.clusters.len()..self.clusters.len();
