@@ -140,198 +140,6 @@ pub(crate) fn shape_text<'a, B: Brush>(
     let mut current_box = inline_box_iter.next();
     let mut deferred_boxes: Vec<usize> = Vec::with_capacity(DEFERRED_BOXES_CAPACITY);
 
-    // Define macro to shape using swash-style segmentation + harfrust shaping
-    macro_rules! shape_item {
-        () => {
-            let item_text = &text[text_range.clone()];
-            let item_infos = &infos[char_range.start..char_range.end]; // Only process current item
-            let first_style_index = item_infos[0].1;
-            let mut font_selector = FontSelector::new(
-                &mut fq,
-                rcx,
-                styles,
-                first_style_index,
-                item.script,
-                item.locale,
-            );
-
-            // Parse text into clusters (exactly like swash does) - but only for current item
-            let tokens: Vec<Token> = item_text.char_indices().zip(item_infos).map(
-                |((offset, ch), (info, style_index))| Token {
-                    ch,
-                    offset: (text_range.start + offset) as u32,
-                    len: ch.len_utf8() as u8,
-                    info: *info,
-                    data: *style_index as u32,
-                }
-            ).collect();
-
-            let mut parser = swash::text::cluster::Parser::new(item.script, tokens.into_iter());
-            let mut cluster = CharCluster::new();
-
-            // Reimplement swash's shape_clusters algorithm - but only for current item
-            if !parser.next(&mut cluster) {
-                return;  // No clusters to process
-            }
-
-            let mut current_font = font_selector.select_font(&mut cluster);
-
-            // Main segmentation loop (based on swash shape_clusters) - only within current item
-            while let Some(font) = current_font.take() {
-                // Collect all clusters for this font segment
-                let mut segment_clusters = vec![cluster.clone()];
-                let segment_start_offset = cluster.range().start as usize - text_range.start;
-                let mut segment_end_offset = cluster.range().end as usize - text_range.start;
-
-                loop {
-                    if !parser.next(&mut cluster) {
-                        // End of current item - process final segment
-                        break;
-                    }
-
-                    if let Some(next_font) = font_selector.select_font(&mut cluster) {
-                        if next_font != font {
-                            // Font changed - end current segment, start new one
-                            current_font = Some(next_font);
-                            break;
-                        }
-                        // Same font - add to current segment
-                        segment_clusters.push(cluster.clone());
-                        segment_end_offset = cluster.range().end as usize - text_range.start;
-                    } else {
-                        // No font found - skip this cluster
-                        if !parser.next(&mut cluster) {
-                            break;
-                        }
-                    }
-                }
-
-                // Shape this font segment with harfrust
-                let segment_text = &item_text[segment_start_offset..segment_end_offset];
-                let _segment_text_range = (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset);
-
-                // Split segment at newlines and shape each part separately
-                let mut current_offset = segment_start_offset;
-                for part in segment_text.split_inclusive('\n') {
-                    if part.is_empty() {
-                        continue;
-                    }
-
-                    let part_start = current_offset;
-                    let part_end = current_offset + part.len();
-                    let part_text = &item_text[part_start..part_end];
-                    let part_text_range = (text_range.start + part_start)..(text_range.start + part_end);
-
-                    // Filter out only the actual newline character for shaping (but preserve for ranges)
-                    let part_for_shaping = if part.ends_with('\n') {
-                        &part[..part.len()-1]  // Remove trailing newline for shaping
-                    } else {
-                        part
-                    };
-
-                    if part_for_shaping.is_empty() {
-                        current_offset = part_end;
-                        continue; // Skip empty parts
-                    }
-
-                    current_offset = part_end;
-
-                    if let Ok(harf_font) = harfrust::FontRef::from_index(
-                        font.font.blob.as_ref(),
-                        font.font.index
-                    ) {
-                        // Create harfrust shaper
-                        let shaper_data = harfrust::ShaperData::new(&harf_font);
-                        let mut variations: Vec<harfrust::Variation> = vec![];
-
-                        // Extract variations from swash synthesis
-                        for setting in font.synthesis.variations() {
-                            variations.push(harfrust::Variation {
-                                tag: convert_swash_tag_to_harfrust(setting.tag),
-                                value: setting.value
-                            });
-                        }
-
-                        let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
-                        let harf_shaper = shaper_data
-                            .shaper(&harf_font)
-                            .instance(Some(&instance))
-                            .point_size(Some(item.size))
-                            .build();
-
-                        // Prepare harfrust buffer
-                        let mut buffer = harfrust::UnicodeBuffer::new();
-
-                        // Use the part for shaping (without newlines)
-                        buffer.push_str(part_for_shaping);
-
-                        let direction = if item.level & 1 != 0 {
-                            harfrust::Direction::RightToLeft
-                        } else {
-                            harfrust::Direction::LeftToRight
-                        };
-                        buffer.set_direction(direction);
-
-                        let script = convert_script_to_harfrust(item.script);
-                        buffer.set_script(script);
-
-                            // Shape the text
-                            let mut features: Vec<harfrust::Feature> = vec![];
-
-                            // Add Arabic-specific OpenType features for proper shaping
-                            if item.script == Script::Arabic {
-                                features.extend([
-                                    // Required Arabic features
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"ccmp"), 1, 0..),  // Glyph composition/decomposition
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"isol"), 1, 0..),  // Isolated forms
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"fina"), 1, 0..),  // Final forms
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"medi"), 1, 0..),  // Medial forms
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"init"), 1, 0..),  // Initial forms
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"rlig"), 1, 0..),  // Required ligatures
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"liga"), 1, 0..),  // Standard ligatures
-                                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"calt"), 1, 0..),  // Contextual alternates
-                                ]);
-                            }
-
-                            let glyph_buffer = harf_shaper.shape(buffer, &features);
-
-                            // Calculate character range for this part within the current item
-                        let char_start = char_range.start + item_text[..part_start].chars().count();
-                        let char_end = char_start + part_text.chars().count();
-                        let segment_char_range = char_start..char_end;
-
-                        // Extract relevant CharInfo slice for this part
-                        let segment_char_start = char_start - char_range.start;
-                        let segment_char_count = part_text.chars().count();
-                        let segment_infos = if segment_char_start < item_infos.len() {
-                            let end_idx = (segment_char_start + segment_char_count).min(item_infos.len());
-                            &item_infos[segment_char_start..end_idx]
-                        } else {
-                            &[]
-                        };
-
-                        // Push harfrust-shaped run
-                        layout.data.push_run_from_harfrust(
-                            Font::new(font.font.blob.clone(), font.font.index),
-                            item.size,
-                            synthesis_to_harf_simple(font.synthesis),
-                            font.font.synthesis, // Use the original fontique synthesis from QueryFont
-                            &glyph_buffer,
-                            item.level,
-                            item.word_spacing,
-                            item.letter_spacing,
-                            part_text,
-                            segment_infos,
-                            part_text_range,
-                            segment_char_range,
-                            &variations,
-                        );
-                    }
-                }
-            }
-        };
-    }
-
     // Iterate over characters in the text (same as original)
     for ((char_index, (byte_index, ch)), (info, style_index)) in
         text.char_indices().enumerate().zip(infos)
@@ -372,7 +180,17 @@ pub(crate) fn shape_text<'a, B: Brush>(
         }
 
         if break_run && !text_range.is_empty() {
-            shape_item!();
+            shape_item(
+                &mut fq,
+                rcx,
+                styles,
+                &item,
+                text,
+                &text_range,
+                &char_range,
+                infos,
+                layout,
+            );
             item.size = style.font_size;
             item.level = level;
             item.script = script;
@@ -392,7 +210,17 @@ pub(crate) fn shape_text<'a, B: Brush>(
     }
 
     if !text_range.is_empty() {
-        shape_item!();
+        shape_item(
+            &mut fq,
+            rcx,
+            styles,
+            &item,
+            text,
+            &text_range,
+            &char_range,
+            infos,
+            layout,
+        );
     }
 
     // Process any remaining inline boxes
@@ -401,6 +229,201 @@ pub(crate) fn shape_text<'a, B: Brush>(
     }
     for (box_idx, _inline_box) in inline_box_iter {
         layout.data.push_inline_box(box_idx);
+    }
+}
+
+fn shape_item<'a, B: Brush>(
+    fq: &mut Query<'a>,
+    rcx: &'a ResolveContext,
+    styles: &'a [RangedStyle<B>],
+    item: &Item,
+    text: &str,
+    text_range: &std::ops::Range<usize>,
+    char_range: &std::ops::Range<usize>,
+    infos: &[(CharInfo, u16)],
+    layout: &mut Layout<B>,
+) {
+    let item_text = &text[text_range.clone()];
+    let item_infos = &infos[char_range.start..char_range.end]; // Only process current item
+    let first_style_index = item_infos[0].1;
+    let mut font_selector =
+        FontSelector::new(fq, rcx, styles, first_style_index, item.script, item.locale);
+
+    // Parse text into clusters (exactly like swash does) - but only for current item
+    let tokens: Vec<Token> = item_text
+        .char_indices()
+        .zip(item_infos)
+        .map(|((offset, ch), (info, style_index))| Token {
+            ch,
+            offset: (text_range.start + offset) as u32,
+            len: ch.len_utf8() as u8,
+            info: *info,
+            data: *style_index as u32,
+        })
+        .collect();
+
+    let mut parser = swash::text::cluster::Parser::new(item.script, tokens.into_iter());
+    let mut cluster = CharCluster::new();
+
+    // Reimplement swash's shape_clusters algorithm - but only for current item
+    if !parser.next(&mut cluster) {
+        return; // No clusters to process
+    }
+
+    let mut current_font = font_selector.select_font(&mut cluster);
+
+    // Main segmentation loop (based on swash shape_clusters) - only within current item
+    while let Some(font) = current_font.take() {
+        // Collect all clusters for this font segment
+        let mut segment_clusters = vec![cluster.clone()];
+        let segment_start_offset = cluster.range().start as usize - text_range.start;
+        let mut segment_end_offset = cluster.range().end as usize - text_range.start;
+
+        loop {
+            if !parser.next(&mut cluster) {
+                // End of current item - process final segment
+                break;
+            }
+
+            if let Some(next_font) = font_selector.select_font(&mut cluster) {
+                if next_font != font {
+                    // Font changed - end current segment, start new one
+                    current_font = Some(next_font);
+                    break;
+                }
+                // Same font - add to current segment
+                segment_clusters.push(cluster.clone());
+                segment_end_offset = cluster.range().end as usize - text_range.start;
+            } else {
+                // No font found - skip this cluster
+                if !parser.next(&mut cluster) {
+                    break;
+                }
+            }
+        }
+
+        // Shape this font segment with harfrust
+        let segment_text = &item_text[segment_start_offset..segment_end_offset];
+        let _segment_text_range =
+            (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset);
+
+        // Split segment at newlines and shape each part separately
+        let mut current_offset = segment_start_offset;
+        for part in segment_text.split_inclusive('\n') {
+            if part.is_empty() {
+                continue;
+            }
+
+            let part_start = current_offset;
+            let part_end = current_offset + part.len();
+            let part_text = &item_text[part_start..part_end];
+            let part_text_range = (text_range.start + part_start)..(text_range.start + part_end);
+
+            // Filter out only the actual newline character for shaping (but preserve for ranges)
+            let part_for_shaping = if part.ends_with('\n') {
+                &part[..part.len() - 1] // Remove trailing newline for shaping
+            } else {
+                part
+            };
+
+            if part_for_shaping.is_empty() {
+                current_offset = part_end;
+                continue; // Skip empty parts
+            }
+
+            current_offset = part_end;
+
+            if let Ok(harf_font) =
+                harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index)
+            {
+                // Create harfrust shaper
+                let shaper_data = harfrust::ShaperData::new(&harf_font);
+                let mut variations: Vec<harfrust::Variation> = vec![];
+
+                // Extract variations from swash synthesis
+                for setting in font.synthesis.variations() {
+                    variations.push(harfrust::Variation {
+                        tag: convert_swash_tag_to_harfrust(setting.tag),
+                        value: setting.value,
+                    });
+                }
+
+                let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
+                let harf_shaper = shaper_data
+                    .shaper(&harf_font)
+                    .instance(Some(&instance))
+                    .point_size(Some(item.size))
+                    .build();
+
+                // Prepare harfrust buffer
+                let mut buffer = harfrust::UnicodeBuffer::new();
+
+                // Use the part for shaping (without newlines)
+                buffer.push_str(part_for_shaping);
+
+                let direction = if item.level & 1 != 0 {
+                    harfrust::Direction::RightToLeft
+                } else {
+                    harfrust::Direction::LeftToRight
+                };
+                buffer.set_direction(direction);
+
+                let script = convert_script_to_harfrust(item.script);
+                buffer.set_script(script);
+
+                // Shape the text
+                let mut features: Vec<harfrust::Feature> = vec![];
+
+                // Add Arabic-specific OpenType features for proper shaping
+                if item.script == Script::Arabic {
+                    features.extend([
+                        // Required Arabic features
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"ccmp"), 1, 0..), // Glyph composition/decomposition
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"isol"), 1, 0..), // Isolated forms
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"fina"), 1, 0..), // Final forms
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"medi"), 1, 0..), // Medial forms
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"init"), 1, 0..), // Initial forms
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"rlig"), 1, 0..), // Required ligatures
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"liga"), 1, 0..), // Standard ligatures
+                        harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"calt"), 1, 0..), // Contextual alternates
+                    ]);
+                }
+
+                let glyph_buffer = harf_shaper.shape(buffer, &features);
+
+                // Calculate character range for this part within the current item
+                let char_start = char_range.start + item_text[..part_start].chars().count();
+                let char_end = char_start + part_text.chars().count();
+                let segment_char_range = char_start..char_end;
+
+                // Extract relevant CharInfo slice for this part
+                let segment_char_start = char_start - char_range.start;
+                let segment_char_count = part_text.chars().count();
+                let segment_infos = if segment_char_start < item_infos.len() {
+                    let end_idx = (segment_char_start + segment_char_count).min(item_infos.len());
+                    &item_infos[segment_char_start..end_idx]
+                } else {
+                    &[]
+                };
+
+                // Push harfrust-shaped run
+                layout.data.push_run_from_harfrust(
+                    Font::new(font.font.blob.clone(), font.font.index),
+                    item.size,
+                    synthesis_to_harf_simple(font.synthesis),
+                    font.font.synthesis, // Use the original fontique synthesis from QueryFont
+                    &glyph_buffer,
+                    item.level,
+                    item.word_spacing,
+                    item.letter_spacing,
+                    part_text,
+                    segment_infos,
+                    part_text_range,
+                    segment_char_range,
+                    &variations,
+                );
+            }
+        }
     }
 }
 
