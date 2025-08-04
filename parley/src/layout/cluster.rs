@@ -1,9 +1,7 @@
 // Copyright 2021 the Parley Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use super::{
-    BreakReason, Brush, Cluster, Glyph, Layout, Line, LineItem, Range, Run, Style,
-};
+use super::{BreakReason, Brush, Cluster, Glyph, Layout, Line, LineItem, Range, Run, Style};
 use swash::text::cluster::Whitespace;
 
 /// Defines the visual side of the cluster for hit testing.
@@ -169,13 +167,13 @@ impl<'a, B: Brush> Cluster<'a, B> {
     pub fn glyphs(&self) -> impl Iterator<Item = Glyph> + 'a + Clone {
         if self.data.glyph_len == 0xFF {
             GlyphIter::Single(Some(Glyph {
-                id: self.data.glyph_offset as u32,  // Convert u16 to u32 for harfrust glyph ID
+                id: self.data.glyph_offset as u32, // Convert u16 to u32 for harfrust glyph ID
                 style_index: self.data.style_index,
                 x: 0.,
                 y: 0.,
                 advance: self.data.advance,
                 cluster_index: 0, // TODO: Get from cluster mapping
-                flags: 0, // TODO: Get from harfrust
+                flags: 0,         // TODO: Get from harfrust
             }))
         } else {
             let start = self.run.data.glyph_start + self.data.glyph_offset as usize;

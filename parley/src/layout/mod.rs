@@ -26,8 +26,8 @@ use core::{cmp::Ordering, ops::Range};
 use data::{ClusterData, LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData, RunData};
 #[cfg(feature = "accesskit")]
 use hashbrown::{HashMap, HashSet};
-use swash::text::cluster::Boundary;
 use swash::Synthesis;
+use swash::text::cluster::Boundary;
 // Remove swash::GlyphId - using harfrust glyph IDs instead
 
 pub use alignment::AlignmentOptions;
@@ -283,21 +283,21 @@ impl Glyph {
     pub fn style_index(&self) -> usize {
         self.style_index as usize
     }
-    
+
     /// Returns the cluster index this glyph belongs to
     pub fn cluster_index(&self) -> usize {
         self.cluster_index as usize
     }
-    
+
     /// Checks if this glyph has the unsafe_to_break flag set
     pub fn is_unsafe_to_break(&self) -> bool {
         // Harfrust flag constants would be defined in harfrust crate
-        self.flags & 0x00000001 != 0  // Example flag bit
+        self.flags & 0x00000001 != 0 // Example flag bit
     }
-    
+
     /// Checks if this glyph is part of a cluster that shouldn't be broken
     pub fn is_cluster_start(&self) -> bool {
-        self.flags & 0x00000002 != 0  // Example flag bit
+        self.flags & 0x00000002 != 0 // Example flag bit
     }
 }
 

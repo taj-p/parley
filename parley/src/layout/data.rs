@@ -10,8 +10,8 @@ use core::ops::Range;
 
 use swash::text::cluster::{Boundary, Whitespace};
 
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
 #[cfg(feature = "libm")]
 #[allow(unused_imports)]
@@ -20,33 +20,33 @@ use core_maths::CoreFloat;
 use skrifa::raw::TableProvider;
 
 /// Default units per em for font scaling.
-/// 
+///
 /// This is used as a fallback when the actual font units per em cannot be determined.
 /// Most TrueType fonts use 2048, while PostScript fonts typically use 1000.
-/// 
+///
 /// TODO: Extract the actual units_per_em from the font header for more accurate scaling.
 const DEFAULT_UNITS_PER_EM: f32 = 2048.0;
 
 /// Simple synthesis specification for HarfBuzz compatibility
-/// 
+///
 /// TODO: This is a minimal implementation that covers basic font synthesis.
 /// For full compatibility with swash::Synthesis and fontique::Synthesis, we should add:
-/// 
+///
 /// 1. **Variation settings**: `Vec<(Tag, f32)>` - for precise weight/width/slant adjustments
 ///    instead of just boolean bold/italic. Modern variable fonts use continuous axes
 ///    (e.g., weight 100-900) rather than discrete on/off switches.
-/// 
+///
 /// 2. **Precise skew angle**: `Option<f32>` - the exact italic/oblique angle in degrees
 ///    instead of just a boolean. Different fonts may need different skew amounts.
-/// 
+///
 /// 3. **Small caps synthesis**: `bool` - for synthesizing small capitals when the font
 ///    doesn't have native small caps support.
-/// 
-/// 4. **Advanced synthesis options**: 
+///
+/// 4. **Advanced synthesis options**:
 ///    - Condensed/expanded synthesis for width adjustments
 ///    - Optical sizing hints
 ///    - Any other synthesis features that HarfBuzz supports
-/// 
+///
 /// The current implementation satisfies basic use cases but should be expanded when:
 /// - Variable font support becomes critical
 /// - More sophisticated font matching is needed  
@@ -86,18 +86,18 @@ impl HarfClusterInfo {
             '\u{00A0}' => Whitespace::Space, // Non-breaking space treated as regular space
             _ => Whitespace::None,
         };
-        
+
         Self {
             boundary,
             source_char,
         }
     }
-    
+
     /// Get boundary type (critical for line breaking)
     pub(crate) fn boundary(&self) -> Option<Boundary> {
         self.boundary
     }
-    
+
     /// Get whitespace type
     pub(crate) fn whitespace(&self) -> Whitespace {
         if self.source_char.is_whitespace() {
@@ -106,18 +106,18 @@ impl HarfClusterInfo {
             Whitespace::None
         }
     }
-    
+
     /// Check if this is a word boundary
     pub(crate) fn is_boundary(&self) -> bool {
         self.boundary.is_some()
     }
-    
+
     /// Check if this is an emoji
     pub(crate) fn is_emoji(&self) -> bool {
         // Simple emoji detection - could be enhanced
         matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
     }
-    
+
     /// Check if this is any kind of whitespace
     pub(crate) fn is_whitespace(&self) -> bool {
         self.source_char.is_whitespace()
@@ -459,19 +459,19 @@ impl<B: Brush> LayoutData<B> {
         // NEW: Add text analysis data needed for proper clustering
         source_text: &str,
         infos: &[(swash::text::cluster::CharInfo, u16)], // From text analysis
-        text_range: Range<usize>, // The text range this run covers
-        char_range: Range<usize>, // Range into infos array
+        text_range: Range<usize>,                        // The text range this run covers
+        char_range: Range<usize>,                        // Range into infos array
         // NEW: Add actual font variations used during shaping
         variations: &[harfrust::Variation],
     ) {
         // Store font variations as normalized coordinates FIRST (before font moves)
         // Proper solution: Read font's fvar table and map variations to correct axis positions
         let coords_start = self.coords.len();
-        
+
         if !variations.is_empty() {
             self.store_variations_properly(&font, variations);
         }
-        
+
         let coords_end = self.coords.len();
 
         let font_index = self
@@ -483,7 +483,7 @@ impl<B: Brush> LayoutData<B> {
                 self.fonts.push(font);
                 index
             });
-        
+
         // For now, create default metrics since we don't have them from harfrust
         // TODO: Get actual metrics from the font
         let metrics = RunMetrics {
@@ -495,14 +495,14 @@ impl<B: Brush> LayoutData<B> {
             strikethrough_offset: font_size * 0.3,
             strikethrough_size: font_size * 0.05,
         };
-        
+
         let cluster_range = self.clusters.len()..self.clusters.len();
-        
+
         let mut run = RunData {
             font_index,
             font_size,
             synthesis,
-            fontique_synthesis: Some(fontique_synthesis),  // Store original fontique synthesis
+            fontique_synthesis: Some(fontique_synthesis), // Store original fontique synthesis
             coords_range: coords_start..coords_end,
             text_range: text_range.clone(), // ✅ Use correct text range from parameter
             bidi_level,
@@ -520,64 +520,67 @@ impl<B: Brush> LayoutData<B> {
         // Get harfrust glyph data
         let glyph_infos = glyph_buffer.glyph_infos();
         let glyph_positions = glyph_buffer.glyph_positions();
-        
+
         if glyph_infos.is_empty() {
             return;
         }
 
         // Map harfrust clusters to source text and create proper cluster data
         let cluster_mappings = self.map_harfrust_clusters_to_text(
-            glyph_buffer, 
-            source_text, 
-            infos, 
+            glyph_buffer,
+            source_text,
+            infos,
             &text_range,
             &char_range,
             bidi_level,
         );
-        
+
         // Group glyphs by harfrust cluster ID
         let mut cluster_groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         for (i, info) in glyph_infos.iter().enumerate() {
             cluster_groups.entry(info.cluster).or_default().push(i);
         }
-        
+
         // Process clusters and add their glyphs to the run
         let mut all_run_glyphs = Vec::new();
         let mut cluster_data_list = Vec::new();
         let mut run_advance = 0.0;
-        
+
         for (cluster_id, cluster_text_range, cluster_info, style_index) in &cluster_mappings {
             if let Some(glyph_indices) = cluster_groups.get(cluster_id) {
-                let cluster_glyphs: Vec<_> = glyph_indices.iter()
+                let cluster_glyphs: Vec<_> = glyph_indices
+                    .iter()
                     .map(|&i| (&glyph_infos[i], &glyph_positions[i]))
                     .collect();
-                
+
                 // Store cluster data for later processing
                 cluster_data_list.push((
                     *cluster_id,
                     cluster_glyphs,
                     cluster_text_range.clone(),
                     cluster_info.clone(),
-                    *style_index
+                    *style_index,
                 ));
             }
         }
-        
+
         // For RTL text, we need to reverse the glyph order within the run to match visual order
         let is_rtl = bidi_level & 1 != 0;
         if is_rtl {
             cluster_data_list.reverse();
         }
-        
+
         // Now process clusters in the correct visual order
-        for (cluster_id, cluster_glyphs, cluster_text_range, cluster_info, style_index) in cluster_data_list {
+        for (cluster_id, cluster_glyphs, cluster_text_range, cluster_info, style_index) in
+            cluster_data_list
+        {
             // Add glyphs to the run in visual order
             let mut cluster_advance = 0.0;
             let glyph_start = all_run_glyphs.len();
-            
+
             for (info, pos) in &cluster_glyphs {
                 let scale_factor = font_size / DEFAULT_UNITS_PER_EM;
-                
+
                 let glyph = Glyph {
                     id: info.glyph_id,
                     style_index,
@@ -590,7 +593,7 @@ impl<B: Brush> LayoutData<B> {
                 cluster_advance += glyph.advance;
                 all_run_glyphs.push(glyph);
             }
-            
+
             // Create cluster data
             let cluster_data = ClusterData {
                 info: cluster_info,
@@ -602,20 +605,20 @@ impl<B: Brush> LayoutData<B> {
                 text_offset: cluster_text_range.start.saturating_sub(text_range.start) as u16,
                 glyph_offset: glyph_start as u16,
             };
-            
+
             self.clusters.push(cluster_data);
             run.cluster_range.end += 1;
             run_advance += cluster_advance;
         }
-        
+
         // Add all glyphs to the global glyph list in correct order
         self.glyphs.extend(all_run_glyphs);
-        
+
         run.advance = run_advance;
-        
-        // Store final run data with harfrust synthesis 
+
+        // Store final run data with harfrust synthesis
         run.synthesis = synthesis;
-        
+
         // Push the run
         if !run.cluster_range.is_empty() {
             self.runs.push(run);
@@ -638,35 +641,35 @@ impl<B: Brush> LayoutData<B> {
         bidi_level: u8, // Added to handle RTL cluster ordering
     ) -> Vec<(u32, Range<usize>, HarfClusterInfo, u16)> {
         // Returns: (harfrust_cluster_id, text_byte_range, cluster_info, style_index)
-        
+
         let mut clusters = Vec::new();
         let glyph_infos = glyph_buffer.glyph_infos();
-        
+
         // Group glyphs by harfrust cluster ID
         let mut cluster_groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         for (i, info) in glyph_infos.iter().enumerate() {
             cluster_groups.entry(info.cluster).or_default().push(i);
         }
-        
+
         // Map each harfrust cluster back to source text
         // Sort cluster IDs to process them in order
         let mut sorted_cluster_ids: Vec<u32> = cluster_groups.keys().copied().collect();
         sorted_cluster_ids.sort();
-        
+
         // ✅ IMPORTANT: Reverse cluster order for RTL text to match swash behavior
         let is_rtl = bidi_level & 1 != 0;
         if is_rtl {
             sorted_cluster_ids.reverse();
         }
-        
+
         for &cluster_id in sorted_cluster_ids.iter() {
             // For each cluster, map it to the corresponding character using the cluster ID
             // NOTE: cluster IDs are relative to the current text segment, not global
             let char_idx_in_range = cluster_id as usize;
-            
+
             if char_idx_in_range < char_range.len() {
                 let _absolute_char_idx = char_range.start + char_idx_in_range;
-                
+
                 // Get cluster info from swash text analysis
                 // Use char_idx_in_range (relative index) instead of absolute_char_idx
                 if let Some((char_info, style_index)) = infos.get(char_idx_in_range) {
@@ -674,33 +677,40 @@ impl<B: Brush> LayoutData<B> {
                     let boundary = char_info.boundary();
                     // Use segment-relative index since source_text is only the current segment
                     let segment_relative_char_idx = char_idx_in_range; // This is already relative to the segment
-                    let source_char = source_text.chars().nth(segment_relative_char_idx).unwrap_or(' ');
+                    let source_char = source_text
+                        .chars()
+                        .nth(segment_relative_char_idx)
+                        .unwrap_or(' ');
                     let cluster_info = HarfClusterInfo::new(Some(boundary), source_char);
-                    
+
                     // Calculate BYTE range for this cluster from character positions
                     // Convert character index to byte index within the segment
-                    let char_byte_start = source_text.char_indices()
+                    let char_byte_start = source_text
+                        .char_indices()
                         .nth(segment_relative_char_idx)
                         .map(|(byte_idx, _)| byte_idx)
                         .unwrap_or(0);
-                    
-                    let char_byte_end = if segment_relative_char_idx + 1 < source_text.chars().count() {
-                        source_text.char_indices()
-                            .nth(segment_relative_char_idx + 1)
-                            .map(|(byte_idx, _)| byte_idx)
-                            .unwrap_or(source_text.len())
-                    } else {
-                        source_text.len()
-                    };
-                    
+
+                    let char_byte_end =
+                        if segment_relative_char_idx + 1 < source_text.chars().count() {
+                            source_text
+                                .char_indices()
+                                .nth(segment_relative_char_idx + 1)
+                                .map(|(byte_idx, _)| byte_idx)
+                                .unwrap_or(source_text.len())
+                        } else {
+                            source_text.len()
+                        };
+
                     // Convert to absolute byte positions
-                    let cluster_text_range = (text_range.start + char_byte_start)..(text_range.start + char_byte_end);
-                    
+                    let cluster_text_range =
+                        (text_range.start + char_byte_start)..(text_range.start + char_byte_end);
+
                     clusters.push((cluster_id, cluster_text_range, cluster_info, *style_index));
                 }
             }
         }
-        
+
         clusters
     }
 
@@ -793,7 +803,7 @@ impl<B: Brush> LayoutData<B> {
             max: max_width,
         }
     }
-    
+
     /// Store font variations as normalized coordinates using proper axis mapping
     /// This replicates what swash did internally: read fvar table, map variations to correct positions
     fn store_variations_properly(&mut self, font: &Font, variations: &[harfrust::Variation]) {
@@ -803,11 +813,11 @@ impl<B: Brush> LayoutData<B> {
                 if let Ok(axes) = fvar.axes() {
                     let axis_count = fvar.axis_count() as usize;
                     let mut coords = vec![0i16; axis_count];
-                    
+
                     // Map each fontique variation to its correct axis position
                     for variation in variations {
                         let variation_tag = skrifa::Tag::from_be_bytes(variation.tag.to_be_bytes());
-                        
+
                         // Find which axis this variation belongs to
                         for (axis_index, axis_record) in axes.iter().enumerate() {
                             if axis_record.axis_tag() == variation_tag {
@@ -815,30 +825,30 @@ impl<B: Brush> LayoutData<B> {
                                 let min_val = axis_record.min_value().to_f32();
                                 let default_val = axis_record.default_value().to_f32();
                                 let max_val = axis_record.max_value().to_f32();
-                                
+
                                 // Generic normalization (same formula for all axes)
                                 let normalized_f32 = if variation.value >= default_val {
                                     (variation.value - default_val) / (max_val - default_val)
                                 } else {
                                     (variation.value - default_val) / (default_val - min_val)
                                 };
-                                
+
                                 let clamped = normalized_f32.clamp(-1.0, 1.0);
                                 let normalized_coord = (clamped * 16384.0) as i16;
-                                
+
                                 coords[axis_index] = normalized_coord;
                                 break;
                             }
                         }
                     }
-                    
+
                     // Store all coordinates (including zeros for unused axes)
                     self.coords.extend(coords);
                     return;
                 }
             }
         }
-        
+
         // Fallback: simple storage if fvar reading fails
         for variation in variations {
             let normalized_f32 = (variation.value - 400.0) / (1000.0 - 400.0);
