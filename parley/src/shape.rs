@@ -337,7 +337,7 @@ fn shape_item<'a, B: Brush>(
                 harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
 
             // Create harfrust shaper
-            // TODO: cache this upstream
+            // TODO: cache this upstream?
             let shaper_data = harfrust::ShaperData::new(&harf_font);
             let mut variations: Vec<harfrust::Variation> = vec![];
 
