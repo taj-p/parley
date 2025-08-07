@@ -369,32 +369,6 @@ impl<B: Brush> Default for LayoutData<B> {
 }
 
 impl<B: Brush> LayoutData<B> {
-    /// Create new layout data.
-    pub(crate) fn new() -> Self {
-        Self {
-            scale: 1.0,
-            quantize: true,
-            text_len: 0,
-            base_level: 0,
-            width: 0.0,
-            full_width: 0.0,
-            height: 0.0,
-            fonts: Vec::new(),
-            coords: Vec::new(),
-            styles: Vec::new(),
-            inline_boxes: Vec::new(),
-            has_bidi: false,
-            runs: Vec::new(),
-            items: Vec::new(),
-            clusters: Vec::new(),
-            glyphs: Vec::new(),
-            lines: Vec::new(),
-            line_items: Vec::new(),
-            is_aligned_justified: false,
-            alignment_width: 0.0,
-        }
-    }
-
     pub(crate) fn clear(&mut self) {
         self.scale = 1.;
         self.quantize = true;
