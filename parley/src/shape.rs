@@ -258,8 +258,6 @@ fn shape_item<'a, B: Brush>(
                 data: *style_index as u32,
             });
 
-    println!("script: {:?}", item.script);
-
     let mut parser = swash::text::cluster::Parser::new(item.script, tokens);
     let mut cluster = CharCluster::new();
 
@@ -303,7 +301,6 @@ fn shape_item<'a, B: Brush>(
 
         // Shape this font segment with harfrust
         let segment_text = &item_text[segment_start_offset..segment_end_offset];
-        println!("segment_text: {:?}", segment_text);
         let _segment_text_range =
             (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset);
 
@@ -349,52 +346,14 @@ fn shape_item<'a, B: Brush>(
         let script = convert_script_to_harfrust(item.script);
         buffer.set_script(script);
 
-        // Set language if available for Arabic script
         if let Some(lang) = item.locale {
-            // Convert swash Language to harfrust Language
             let lang_tag = lang.language();
             if let Ok(harf_lang) = lang_tag.parse::<harfrust::Language>() {
-                println!("lang: {:?}", harf_lang);
-
                 buffer.set_language(harf_lang);
             }
         }
 
         let glyph_buffer = harf_shaper.shape(buffer, &[]);
-
-        // Debug: Print shaping results for Arabic text
-        if item.script == Script::Arabic {
-            let glyph_infos = glyph_buffer.glyph_infos();
-            let glyph_positions = glyph_buffer.glyph_positions();
-            println!(
-                "Arabic shaping results for '{}': {} glyphs",
-                segment_text,
-                glyph_infos.len()
-            );
-
-            // Print the Unicode codepoints we're shaping
-            print!("  Unicode codepoints: ");
-            for ch in segment_text.chars() {
-                print!("U+{:04X} ", ch as u32);
-            }
-            println!();
-
-            for (i, (info, pos)) in glyph_infos.iter().zip(glyph_positions.iter()).enumerate() {
-                println!(
-                    "  Glyph {}: id={}, cluster={}, advance={}",
-                    i, info.glyph_id, info.cluster, pos.x_advance
-                );
-            }
-
-            // Check if glyph IDs are reasonable (not 0 which would indicate missing glyphs)
-            let missing_glyphs = glyph_infos.iter().filter(|info| info.glyph_id == 0).count();
-            if missing_glyphs > 0 {
-                println!(
-                    "  WARNING: {} glyphs are missing (glyph ID 0)!",
-                    missing_glyphs
-                );
-            }
-        }
 
         // Calculate character range for this segment within the current item
         let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
