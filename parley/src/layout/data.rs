@@ -517,7 +517,7 @@ impl<B: Brush> LayoutData<B> {
         // For now, create default metrics since we don't have them from harfrust
         let metrics = RunMetrics {
             ascent: font_size * ascent as f32 / units_per_em as f32,
-            descent: font_size * descent as f32 / units_per_em as f32,
+            descent: -font_size * descent as f32 / units_per_em as f32,
             leading: font_size * leading as f32 / units_per_em as f32,
             underline_offset: font_size * underline_offset as f32 / units_per_em as f32,
             underline_size: font_size * underline_size as f32 / units_per_em as f32,
