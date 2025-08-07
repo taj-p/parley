@@ -77,16 +77,6 @@ pub(crate) struct HarfClusterInfo {
 
 impl HarfClusterInfo {
     pub(crate) fn new(boundary: Option<Boundary>, source_char: char) -> Self {
-        // Detect whitespace from actual character content
-        let _whitespace = match source_char {
-            ' ' => Whitespace::Space,
-            '\t' => Whitespace::Tab,
-            '\n' => Whitespace::Newline,
-            '\r' => Whitespace::Newline,
-            '\u{00A0}' => Whitespace::Space, // Non-breaking space treated as regular space
-            _ => Whitespace::None,
-        };
-
         Self {
             boundary,
             source_char,
@@ -100,10 +90,13 @@ impl HarfClusterInfo {
 
     /// Get whitespace type
     pub(crate) fn whitespace(&self) -> Whitespace {
-        if self.source_char.is_whitespace() {
-            Whitespace::Space
-        } else {
-            Whitespace::None
+        match self.source_char {
+            ' ' => Whitespace::Space,
+            '\t' => Whitespace::Tab,
+            '\n' => Whitespace::Newline,
+            '\r' => Whitespace::Newline,
+            '\u{00A0}' => Whitespace::Space, // Non-breaking space
+            _ => Whitespace::None,
         }
     }
 

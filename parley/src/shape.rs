@@ -4,8 +4,6 @@
 //! Text shaping implementation using HarfBuzz (via harfrust) for shaping
 //! and swash for text analysis and font selection.
 
-use core::str::FromStr;
-
 use alloc::vec::Vec;
 
 // Parley imports
@@ -20,7 +18,6 @@ use crate::util::nearly_eq;
 // External crate imports
 use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
-use skrifa::MetadataProvider;
 use swash::shape::partition::Selector as _;
 use swash::text::cluster::{CharCluster, CharInfo, Token};
 use swash::text::{Language, Script};
@@ -310,172 +307,126 @@ fn shape_item<'a, B: Brush>(
         let _segment_text_range =
             (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset);
 
-        // Split segment at explicit newlines and shape each part separately
-        let mut current_offset = segment_start_offset;
-        for part in segment_text.split_inclusive('\n') {
-            if part.is_empty() {
-                continue;
-            }
+        // Shape the entire segment text including newlines
+        // The line breaking algorithm will handle newlines automatically
 
-            let part_start = current_offset;
-            let part_end = current_offset + part.len();
-            let part_text = &item_text[part_start..part_end];
-            let part_text_range = (text_range.start + part_start)..(text_range.start + part_end);
+        let harf_font =
+            harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
 
-            // Filter out only the actual newline character for shaping (but preserve for ranges)
-            let part_for_shaping = if part.ends_with('\n') {
-                &part[..part.len() - 1] // Remove trailing newline for shaping
-            } else {
-                part
-            };
+        // Create harfrust shaper
+        // TODO: cache this upstream?
+        let shaper_data = harfrust::ShaperData::new(&harf_font);
+        let mut variations: Vec<harfrust::Variation> = vec![];
 
-            if part_for_shaping.is_empty() {
-                current_offset = part_end;
-                continue; // Skip empty parts
-            }
-
-            current_offset = part_end;
-
-            let harf_font =
-                harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
-
-            // Debug: Print font information for Arabic text
-            if item.script == Script::Arabic {
-                println!("Arabic font family: {:?}", font.font.family);
-                println!("Font synthesis: {:?}", font.synthesis);
-                println!("Arabic bidi level: {}", item.level);
-            }
-
-            // Create harfrust shaper
-            // TODO: cache this upstream?
-            let shaper_data = harfrust::ShaperData::new(&harf_font);
-            let mut variations: Vec<harfrust::Variation> = vec![];
-
-            // Extract variations from swash synthesis
-            for setting in font.synthesis.variations() {
-                variations.push(harfrust::Variation {
-                    tag: convert_swash_tag_to_harfrust(setting.tag),
-                    value: setting.value,
-                });
-            }
-
-            let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
-            let harf_shaper = shaper_data
-                .shaper(&harf_font)
-                .instance(Some(&instance))
-                .point_size(Some(item.size))
-                .build();
-
-            // Prepare harfrust buffer
-            let mut buffer = harfrust::UnicodeBuffer::new();
-
-            // Use the part for shaping (without newlines)
-            buffer.push_str(part_for_shaping);
-
-            let direction = if item.level & 1 != 0 {
-                harfrust::Direction::RightToLeft
-            } else {
-                harfrust::Direction::LeftToRight
-            };
-            buffer.set_direction(direction);
-
-            let script = convert_script_to_harfrust(item.script);
-            buffer.set_script(script);
-
-            // Set language if available for Arabic script
-            if let Some(lang) = item.locale {
-                // Convert swash Language to harfrust Language
-                let lang_tag = lang.language();
-                if let Ok(harf_lang) = lang_tag.parse::<harfrust::Language>() {
-                    println!("lang: {:?}", harf_lang);
-
-                    buffer.set_language(harf_lang);
-                }
-            }
-
-            println!("script: {:?}", script);
-
-            // Configure Arabic shaping - let HarfBuzz handle features automatically
-            //if item.script == Script::Arabic {
-            //    println!("setting language for Arabic");
-            //    buffer.set_language(harfrust::Language::from_str("ar-SA").unwrap());
-
-            //    // Let HarfBuzz apply default Arabic features automatically
-            //    // HarfBuzz has a built-in Arabic shaper that should handle contextual forms
-            //    println!("Using HarfBuzz automatic Arabic shaping");
-
-            //    // Don't manually specify features - let HarfBuzz's Arabic shaper handle it
-            //    // This should automatically apply: ccmp, isol, fina, medi, init, rlig, etc.
-            //}
-
-            let glyph_buffer = harf_shaper.shape(buffer, &[]);
-
-            // Debug: Print shaping results for Arabic text
-            if item.script == Script::Arabic {
-                let glyph_infos = glyph_buffer.glyph_infos();
-                let glyph_positions = glyph_buffer.glyph_positions();
-                println!(
-                    "Arabic shaping results for '{}': {} glyphs",
-                    part_for_shaping,
-                    glyph_infos.len()
-                );
-
-                // Print the Unicode codepoints we're shaping
-                print!("  Unicode codepoints: ");
-                for ch in part_for_shaping.chars() {
-                    print!("U+{:04X} ", ch as u32);
-                }
-                println!();
-
-                for (i, (info, pos)) in glyph_infos.iter().zip(glyph_positions.iter()).enumerate() {
-                    println!(
-                        "  Glyph {}: id={}, cluster={}, advance={}",
-                        i, info.glyph_id, info.cluster, pos.x_advance
-                    );
-                }
-
-                // Check if glyph IDs are reasonable (not 0 which would indicate missing glyphs)
-                let missing_glyphs = glyph_infos.iter().filter(|info| info.glyph_id == 0).count();
-                if missing_glyphs > 0 {
-                    println!(
-                        "  WARNING: {} glyphs are missing (glyph ID 0)!",
-                        missing_glyphs
-                    );
-                }
-            }
-
-            // Calculate character range for this part within the current item
-            let char_start = char_range.start + item_text[..part_start].chars().count();
-            let char_end = char_start + part_text.chars().count();
-            let segment_char_range = char_start..char_end;
-
-            // Extract relevant CharInfo slice for this part
-            let segment_char_start = char_start - char_range.start;
-            let segment_char_count = part_text.chars().count();
-            let segment_infos = if segment_char_start < item_infos.len() {
-                let end_idx = (segment_char_start + segment_char_count).min(item_infos.len());
-                &item_infos[segment_char_start..end_idx]
-            } else {
-                &[]
-            };
-
-            // Push harfrust-shaped run
-            layout.data.push_run_from_harfrust(
-                Font::new(font.font.blob.clone(), font.font.index),
-                item.size,
-                synthesis_to_harf_simple(font.synthesis),
-                font.font.synthesis, // Use the original fontique synthesis from QueryFont
-                &glyph_buffer,
-                item.level,
-                item.word_spacing,
-                item.letter_spacing,
-                part_text,
-                segment_infos,
-                part_text_range,
-                segment_char_range,
-                &variations,
-            );
+        // Extract variations from swash synthesis
+        for setting in font.synthesis.variations() {
+            variations.push(harfrust::Variation {
+                tag: convert_swash_tag_to_harfrust(setting.tag),
+                value: setting.value,
+            });
         }
+
+        let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
+        let harf_shaper = shaper_data
+            .shaper(&harf_font)
+            .instance(Some(&instance))
+            .point_size(Some(item.size))
+            .build();
+
+        // Prepare harfrust buffer
+        let mut buffer = harfrust::UnicodeBuffer::new();
+
+        // Use the entire segment text including newlines
+        buffer.push_str(segment_text);
+
+        let direction = if item.level & 1 != 0 {
+            harfrust::Direction::RightToLeft
+        } else {
+            harfrust::Direction::LeftToRight
+        };
+        buffer.set_direction(direction);
+
+        let script = convert_script_to_harfrust(item.script);
+        buffer.set_script(script);
+
+        // Set language if available for Arabic script
+        if let Some(lang) = item.locale {
+            // Convert swash Language to harfrust Language
+            let lang_tag = lang.language();
+            if let Ok(harf_lang) = lang_tag.parse::<harfrust::Language>() {
+                println!("lang: {:?}", harf_lang);
+
+                buffer.set_language(harf_lang);
+            }
+        }
+
+        let glyph_buffer = harf_shaper.shape(buffer, &[]);
+
+        // Debug: Print shaping results for Arabic text
+        if item.script == Script::Arabic {
+            let glyph_infos = glyph_buffer.glyph_infos();
+            let glyph_positions = glyph_buffer.glyph_positions();
+            println!(
+                "Arabic shaping results for '{}': {} glyphs",
+                segment_text,
+                glyph_infos.len()
+            );
+
+            // Print the Unicode codepoints we're shaping
+            print!("  Unicode codepoints: ");
+            for ch in segment_text.chars() {
+                print!("U+{:04X} ", ch as u32);
+            }
+            println!();
+
+            for (i, (info, pos)) in glyph_infos.iter().zip(glyph_positions.iter()).enumerate() {
+                println!(
+                    "  Glyph {}: id={}, cluster={}, advance={}",
+                    i, info.glyph_id, info.cluster, pos.x_advance
+                );
+            }
+
+            // Check if glyph IDs are reasonable (not 0 which would indicate missing glyphs)
+            let missing_glyphs = glyph_infos.iter().filter(|info| info.glyph_id == 0).count();
+            if missing_glyphs > 0 {
+                println!(
+                    "  WARNING: {} glyphs are missing (glyph ID 0)!",
+                    missing_glyphs
+                );
+            }
+        }
+
+        // Calculate character range for this segment within the current item
+        let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
+        let char_end = char_start + segment_text.chars().count();
+        let segment_char_range = char_start..char_end;
+
+        // Extract relevant CharInfo slice for this segment
+        let segment_char_start = char_start - char_range.start;
+        let segment_char_count = segment_text.chars().count();
+        let segment_infos = if segment_char_start < item_infos.len() {
+            let end_idx = (segment_char_start + segment_char_count).min(item_infos.len());
+            &item_infos[segment_char_start..end_idx]
+        } else {
+            &[]
+        };
+
+        // Push harfrust-shaped run for the entire segment
+        layout.data.push_run_from_harfrust(
+            Font::new(font.font.blob.clone(), font.font.index),
+            item.size,
+            synthesis_to_harf_simple(font.synthesis),
+            font.font.synthesis, // Use the original fontique synthesis from QueryFont
+            &glyph_buffer,
+            item.level,
+            item.word_spacing,
+            item.letter_spacing,
+            segment_text,
+            segment_infos,
+            (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset),
+            segment_char_range,
+            &variations,
+        );
     }
 }
 
