@@ -198,11 +198,6 @@ pub(crate) struct RunData {
     pub(crate) letter_spacing: f32,
     /// Total advance of the run.
     pub(crate) advance: f32,
-    // changed: Commenting out harfrust-specific fields for compilation
-    // /// Text direction for this run
-    // pub(crate) direction: harfrust::Direction,
-    // /// Script for this run
-    // pub(crate) script: harfrust::Script,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Debug)]
