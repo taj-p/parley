@@ -23,8 +23,6 @@ use skrifa::raw::TableProvider;
 ///
 /// This is used as a fallback when the actual font units per em cannot be determined.
 /// Most TrueType fonts use 2048, while PostScript fonts typically use 1000.
-///
-/// TODO: Extract the actual units_per_em from the font header for more accurate scaling.
 const DEFAULT_UNITS_PER_EM: f32 = 2048.0;
 
 /// Simple synthesis specification for HarfBuzz compatibility
@@ -107,7 +105,7 @@ impl HarfClusterInfo {
 
     /// Check if this is an emoji
     pub(crate) fn is_emoji(&self) -> bool {
-        // Simple emoji detection - could be enhanced
+        // TODO: Simple emoji detection - could be enhanced
         matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
     }
 
@@ -535,7 +533,7 @@ impl<B: Brush> LayoutData<B> {
             synthesis,
             fontique_synthesis: Some(fontique_synthesis), // Store original fontique synthesis
             coords_range: coords_start..coords_end,
-            text_range: text_range.clone(), // ✅ Use correct text range from parameter
+            text_range,
             bidi_level,
             // changed: Commenting out harfrust-specific fields for compilation
             // direction: Direction::LTR, // Default to LTR for now
@@ -561,7 +559,7 @@ impl<B: Brush> LayoutData<B> {
             glyph_buffer,
             source_text,
             infos,
-            &text_range,
+            &run.text_range,
             &char_range,
             bidi_level,
         );
@@ -610,7 +608,11 @@ impl<B: Brush> LayoutData<B> {
             let glyph_start = all_run_glyphs.len();
 
             for (info, pos) in &cluster_glyphs {
-                let scale_factor = font_size / DEFAULT_UNITS_PER_EM;
+                let units_per_em = font
+                    .head()
+                    .map(|h| h.units_per_em() as f32)
+                    .unwrap_or(DEFAULT_UNITS_PER_EM);
+                let scale_factor = font_size / units_per_em;
 
                 let glyph = Glyph {
                     id: info.glyph_id,
@@ -633,7 +635,9 @@ impl<B: Brush> LayoutData<B> {
                 glyph_len: cluster_glyphs.len() as u8,
                 text_len: cluster_text_range.len() as u8,
                 advance: cluster_advance,
-                text_offset: cluster_text_range.start.saturating_sub(text_range.start) as u16,
+                text_offset: cluster_text_range
+                    .start
+                    .saturating_sub(run.text_range.start) as u16,
                 glyph_offset: glyph_start as u16,
             };
 
