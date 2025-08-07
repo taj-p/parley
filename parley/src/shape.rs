@@ -324,6 +324,7 @@ fn shape_item<'a, B: Brush>(
         }
 
         let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
+        // TODO: Don't create a new shaper for each segment.
         let harf_shaper = shaper_data
             .shaper(&harf_font)
             .instance(Some(&instance))
@@ -331,6 +332,7 @@ fn shape_item<'a, B: Brush>(
             .build();
 
         // Prepare harfrust buffer
+        // TODO: Reuse this buffer for all segments.
         let mut buffer = harfrust::UnicodeBuffer::new();
 
         // Use the entire segment text including newlines

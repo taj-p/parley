@@ -22,12 +22,14 @@ use accesskit::{Node, NodeId, Role, TextDirection, TreeUpdate};
 use alignment::unjustify;
 #[cfg(feature = "accesskit")]
 use alloc::vec::Vec;
+use bitflags::bitflags;
 use core::{cmp::Ordering, ops::Range};
 use data::{ClusterData, LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData, RunData};
 #[cfg(feature = "accesskit")]
 use hashbrown::{HashMap, HashSet};
 use swash::Synthesis;
 use swash::text::cluster::Boundary;
+
 // Remove swash::GlyphId - using harfrust glyph IDs instead
 
 pub use alignment::AlignmentOptions;
@@ -275,29 +277,22 @@ pub struct Glyph {
     /// Cluster index this glyph belongs to (for mapping back to text)
     pub cluster_index: u32,
     /// Glyph flags from harfrust shaping (e.g., unsafe_to_break, etc.)
-    pub flags: u32,
+    pub flags: GlyphFlags,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct GlyphFlags: u8 {
+        const UNSAFE_TO_BREAK = 0b00000001;
+        const UNSAFE_TO_CONCAT = 0b00000010;
+        const SAFE_TO_INSERT_TATWEEL = 0b00000100;
+    }
 }
 
 impl Glyph {
     /// Returns the index into the layout style collection.
     pub fn style_index(&self) -> usize {
         self.style_index as usize
-    }
-
-    /// Returns the cluster index this glyph belongs to
-    pub fn cluster_index(&self) -> usize {
-        self.cluster_index as usize
-    }
-
-    /// Checks if this glyph has the unsafe_to_break flag set
-    pub fn is_unsafe_to_break(&self) -> bool {
-        // Harfrust flag constants would be defined in harfrust crate
-        self.flags & 0x00000001 != 0 // Example flag bit
-    }
-
-    /// Checks if this glyph is part of a cluster that shouldn't be broken
-    pub fn is_cluster_start(&self) -> bool {
-        self.flags & 0x00000002 != 0 // Example flag bit
     }
 }
 

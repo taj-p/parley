@@ -5,12 +5,11 @@ use crate::inline_box::InlineBox;
 use crate::layout::{ContentWidths, Glyph, LineMetrics, RunMetrics, Style};
 use crate::style::Brush;
 use crate::util::nearly_zero;
-use crate::{Font, OverflowWrap};
+use crate::{Font, GlyphFlags, OverflowWrap};
 use core::ops::Range;
 
 use swash::text::cluster::{Boundary, Whitespace};
 
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 #[cfg(feature = "libm")]
@@ -502,8 +501,6 @@ impl<B: Brush> LayoutData<B> {
                 todo!()
             };
 
-        let units_per_em = font.head().unwrap().units_per_em();
-
         let (underline_offset, underline_size) = if let Ok(post) = font.post() {
             // TODO: What to do if these tables don't exist? Should we actually err?
             (
@@ -515,14 +512,18 @@ impl<B: Brush> LayoutData<B> {
         };
 
         // For now, create default metrics since we don't have them from harfrust
+        let units_per_em = font
+            .head()
+            .map(|h| h.units_per_em() as f32)
+            .unwrap_or(DEFAULT_UNITS_PER_EM);
         let metrics = RunMetrics {
-            ascent: font_size * ascent as f32 / units_per_em as f32,
-            descent: -font_size * descent as f32 / units_per_em as f32,
-            leading: font_size * leading as f32 / units_per_em as f32,
-            underline_offset: font_size * underline_offset as f32 / units_per_em as f32,
-            underline_size: font_size * underline_size as f32 / units_per_em as f32,
-            strikethrough_offset: font_size * strikethrough_offset as f32 / units_per_em as f32,
-            strikethrough_size: font_size * strikethrough_size as f32 / units_per_em as f32,
+            ascent: font_size * ascent as f32 / units_per_em,
+            descent: -font_size * descent as f32 / units_per_em,
+            leading: font_size * leading as f32 / units_per_em,
+            underline_offset: font_size * underline_offset as f32 / units_per_em,
+            underline_size: font_size * underline_size as f32 / units_per_em,
+            strikethrough_offset: font_size * strikethrough_offset as f32 / units_per_em,
+            strikethrough_size: font_size * strikethrough_size as f32 / units_per_em,
         };
 
         let cluster_range = self.clusters.len()..self.clusters.len();
@@ -551,100 +552,76 @@ impl<B: Brush> LayoutData<B> {
             return;
         }
 
-        // Map harfrust clusters to source text and create proper cluster data
-        let cluster_mappings = self.map_harfrust_clusters_to_text(
-            glyph_buffer,
-            source_text,
-            infos,
-            &run.text_range,
-            &char_range,
-            bidi_level,
-        );
-
-        // Group glyphs by harfrust cluster ID
-        let mut cluster_groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-        for (i, info) in glyph_infos.iter().enumerate() {
-            cluster_groups.entry(info.cluster).or_default().push(i);
-        }
-
-        // Process clusters and add their glyphs to the run
-        let mut all_run_glyphs = Vec::new();
-        let mut cluster_data_list = Vec::new();
+        let mut current_cluster_id: Option<u32> = None;
+        let mut current_cluster_start = self.glyphs.len();
+        let mut current_cluster_advance = 0.0;
+        let mut cluster_glyph_count = 0u8;
         let mut run_advance = 0.0;
+        let scale_factor = font_size / units_per_em;
 
-        for (cluster_id, cluster_text_range, cluster_info, style_index) in &cluster_mappings {
-            if let Some(glyph_indices) = cluster_groups.get(cluster_id) {
-                let cluster_glyphs: Vec<_> = glyph_indices
-                    .iter()
-                    .map(|&i| (&glyph_infos[i], &glyph_positions[i]))
-                    .collect();
+        for (glyph_info, glyph_pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
+            // Check if we're starting a new cluster
+            if current_cluster_id != Some(glyph_info.cluster) {
+                // Finalize the previous cluster if it exists
+                if let Some(cluster_id) = current_cluster_id {
+                    self.finalize_cluster(
+                        cluster_id,
+                        source_text,
+                        infos,
+                        &run.text_range,
+                        &char_range,
+                        current_cluster_start,
+                        cluster_glyph_count,
+                        current_cluster_advance,
+                        run.glyph_start,
+                    );
+                    run.cluster_range.end += 1;
+                }
 
-                // Store cluster data for later processing
-                cluster_data_list.push((
-                    *cluster_id,
-                    cluster_glyphs,
-                    cluster_text_range.clone(),
-                    cluster_info.clone(),
-                    *style_index,
-                ));
-            }
-        }
-
-        // For RTL text, we need to reverse the glyph order within the run to match visual order
-        let is_rtl = bidi_level & 1 != 0;
-        if is_rtl {
-            cluster_data_list.reverse();
-        }
-
-        // Now process clusters in the correct visual order
-        for (cluster_id, cluster_glyphs, cluster_text_range, cluster_info, style_index) in
-            cluster_data_list
-        {
-            // Add glyphs to the run in visual order
-            let mut cluster_advance = 0.0;
-            let glyph_start = all_run_glyphs.len();
-
-            for (info, pos) in &cluster_glyphs {
-                let units_per_em = font
-                    .head()
-                    .map(|h| h.units_per_em() as f32)
-                    .unwrap_or(DEFAULT_UNITS_PER_EM);
-                let scale_factor = font_size / units_per_em;
-
-                let glyph = Glyph {
-                    id: info.glyph_id,
-                    style_index,
-                    x: (pos.x_offset as f32) * scale_factor,
-                    y: (pos.y_offset as f32) * scale_factor,
-                    advance: (pos.x_advance as f32) * scale_factor,
-                    cluster_index: cluster_id,
-                    flags: 0,
-                };
-                cluster_advance += glyph.advance;
-                all_run_glyphs.push(glyph);
+                // Start new cluster
+                current_cluster_id = Some(glyph_info.cluster);
+                current_cluster_start = self.glyphs.len();
+                current_cluster_advance = 0.0;
+                cluster_glyph_count = 0;
             }
 
-            // Create cluster data
-            let cluster_data = ClusterData {
-                info: cluster_info,
-                flags: 0,
-                style_index,
-                glyph_len: cluster_glyphs.len() as u8,
-                text_len: cluster_text_range.len() as u8,
-                advance: cluster_advance,
-                text_offset: cluster_text_range
-                    .start
-                    .saturating_sub(run.text_range.start) as u16,
-                glyph_offset: glyph_start as u16,
+            let glyph = Glyph {
+                id: glyph_info.glyph_id,
+                style_index: 0, // Will be updated in finalize_cluster
+                x: (glyph_pos.x_offset as f32) * scale_factor,
+                y: (glyph_pos.y_offset as f32) * scale_factor,
+                advance: (glyph_pos.x_advance as f32) * scale_factor,
+                cluster_index: glyph_info.cluster,
+                flags: GlyphFlags::from_bits_truncate(
+                    (glyph_info.unsafe_to_break() as u8) * GlyphFlags::UNSAFE_TO_BREAK.bits()
+                        | (glyph_info.safe_to_insert_tatweel() as u8)
+                            * GlyphFlags::SAFE_TO_INSERT_TATWEEL.bits()
+                        | (glyph_info.unsafe_to_concat() as u8)
+                            * GlyphFlags::UNSAFE_TO_CONCAT.bits(),
+                ),
             };
 
-            self.clusters.push(cluster_data);
-            run.cluster_range.end += 1;
-            run_advance += cluster_advance;
+            current_cluster_advance += glyph.advance;
+            run_advance += glyph.advance;
+            cluster_glyph_count += 1;
+            self.glyphs.push(glyph);
         }
 
-        // Add all glyphs to the global glyph list in correct order
-        self.glyphs.extend(all_run_glyphs);
+        // Finalize the last cluster
+        if let Some(cluster_id) = current_cluster_id {
+            self.finalize_cluster(
+                cluster_id,
+                source_text,
+                infos,
+                &run.text_range,
+                &char_range,
+                current_cluster_start,
+                cluster_glyph_count,
+                current_cluster_advance,
+                run.glyph_start,
+            );
+            run.cluster_range.end += 1;
+        }
 
         run.advance = run_advance;
 
@@ -662,95 +639,78 @@ impl<B: Brush> LayoutData<B> {
         }
     }
 
-    // Helper method to map harfrust clusters back to source text
-    fn map_harfrust_clusters_to_text(
-        &self,
-        glyph_buffer: &harfrust::GlyphBuffer,
+    // Helper method to finalize a cluster once all its glyphs are processed
+    fn finalize_cluster(
+        &mut self,
+        cluster_id: u32,
         source_text: &str,
         infos: &[(swash::text::cluster::CharInfo, u16)],
         text_range: &Range<usize>,
         char_range: &Range<usize>,
-        bidi_level: u8, // Added to handle RTL cluster ordering
-    ) -> Vec<(u32, Range<usize>, HarfClusterInfo, u16)> {
-        // Returns: (harfrust_cluster_id, text_byte_range, cluster_info, style_index)
+        glyph_start_idx: usize,
+        glyph_count: u8,
+        cluster_advance: f32,
+        run_glyph_start: usize,
+    ) {
+        // Map cluster ID (byte offset) to text range and cluster info
+        let byte_offset_in_segment = cluster_id as usize;
 
-        let mut clusters = Vec::new();
-        let glyph_infos = glyph_buffer.glyph_infos();
+        // Convert byte offset to character index within the segment
+        let char_idx_in_segment = if byte_offset_in_segment < source_text.len() {
+            source_text[..byte_offset_in_segment].chars().count()
+        } else {
+            source_text.chars().count().saturating_sub(1)
+        };
 
-        // Group glyphs by harfrust cluster ID
-        let mut cluster_groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
-        for (i, info) in glyph_infos.iter().enumerate() {
-            cluster_groups.entry(info.cluster).or_default().push(i);
-        }
+        if char_idx_in_segment < char_range.len() {
+            if let Some((char_info, style_index)) = infos.get(char_idx_in_segment) {
+                // Create cluster info from swash text analysis
+                let boundary = char_info.boundary();
+                let source_char = source_text.chars().nth(char_idx_in_segment).unwrap_or(' ');
+                let cluster_info = HarfClusterInfo::new(Some(boundary), source_char);
 
-        // Map each harfrust cluster back to source text
-        // Sort cluster IDs to process them in order
-        let mut sorted_cluster_ids: Vec<u32> = cluster_groups.keys().copied().collect();
-        sorted_cluster_ids.sort();
+                // Calculate byte range for this cluster
+                let char_byte_start = source_text
+                    .char_indices()
+                    .nth(char_idx_in_segment)
+                    .map(|(byte_idx, _)| byte_idx)
+                    .unwrap_or(0);
 
-        // ✅ IMPORTANT: Reverse cluster order for RTL text to match swash behavior
-        let is_rtl = bidi_level & 1 != 0;
-        if is_rtl {
-            sorted_cluster_ids.reverse();
-        }
-
-        for &cluster_id in sorted_cluster_ids.iter() {
-            // For each cluster, map it to the corresponding character using the cluster ID
-            // IMPORTANT: cluster IDs in harfrust are BYTE OFFSETS, not character indices
-            let byte_offset_in_segment = cluster_id as usize;
-
-            // Convert byte offset to character index within the segment
-            let char_idx_in_segment = if byte_offset_in_segment < source_text.len() {
-                source_text[..byte_offset_in_segment].chars().count()
-            } else {
-                source_text.chars().count().saturating_sub(1)
-            };
-
-            if char_idx_in_segment < char_range.len() {
-                let _absolute_char_idx = char_range.start + char_idx_in_segment;
-
-                // Get cluster info from swash text analysis
-                // Use char_idx_in_segment (relative index) instead of absolute_char_idx
-                if let Some((char_info, style_index)) = infos.get(char_idx_in_segment) {
-                    // ✅ Extract boundary from CharInfo and create our own cluster info!
-                    let boundary = char_info.boundary();
-                    // Use segment-relative index since source_text is only the current segment
-                    let segment_relative_char_idx = char_idx_in_segment; // This is already relative to the segment
-                    let source_char = source_text
-                        .chars()
-                        .nth(segment_relative_char_idx)
-                        .unwrap_or(' ');
-                    let cluster_info = HarfClusterInfo::new(Some(boundary), source_char);
-
-                    // Calculate BYTE range for this cluster from character positions
-                    // Convert character index to byte index within the segment
-                    let char_byte_start = source_text
+                let char_byte_end = if char_idx_in_segment + 1 < source_text.chars().count() {
+                    source_text
                         .char_indices()
-                        .nth(segment_relative_char_idx)
+                        .nth(char_idx_in_segment + 1)
                         .map(|(byte_idx, _)| byte_idx)
-                        .unwrap_or(0);
+                        .unwrap_or(source_text.len())
+                } else {
+                    source_text.len()
+                };
 
-                    let char_byte_end =
-                        if segment_relative_char_idx + 1 < source_text.chars().count() {
-                            source_text
-                                .char_indices()
-                                .nth(segment_relative_char_idx + 1)
-                                .map(|(byte_idx, _)| byte_idx)
-                                .unwrap_or(source_text.len())
-                        } else {
-                            source_text.len()
-                        };
+                let cluster_text_range =
+                    (text_range.start + char_byte_start)..(text_range.start + char_byte_end);
 
-                    // Convert to absolute byte positions
-                    let cluster_text_range =
-                        (text_range.start + char_byte_start)..(text_range.start + char_byte_end);
-
-                    clusters.push((cluster_id, cluster_text_range, cluster_info, *style_index));
+                // Update style_index for all glyphs in this cluster
+                for glyph in
+                    &mut self.glyphs[glyph_start_idx..glyph_start_idx + glyph_count as usize]
+                {
+                    glyph.style_index = *style_index;
                 }
+
+                // Create and store cluster data
+                let cluster_data = ClusterData {
+                    info: cluster_info,
+                    flags: 0,
+                    style_index: *style_index,
+                    glyph_len: glyph_count,
+                    text_len: cluster_text_range.len() as u8,
+                    advance: cluster_advance,
+                    text_offset: cluster_text_range.start.saturating_sub(text_range.start) as u16,
+                    glyph_offset: (glyph_start_idx - run_glyph_start) as u16,
+                };
+
+                self.clusters.push(cluster_data);
             }
         }
-
-        clusters
     }
 
     pub(crate) fn finish(&mut self) {
