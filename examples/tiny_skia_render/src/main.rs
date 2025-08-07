@@ -15,6 +15,7 @@
 
 use parley::{
     AlignmentOptions, FontContext, GlyphRun, InlineBox, Layout, LayoutContext, LineHeight,
+    RangedBuilder,
     layout::{Alignment, PositionedLayoutItem},
     style::{FontWeight, GenericFamily, StyleProperty},
 };
@@ -39,12 +40,76 @@ impl Default for ColorBrush {
     }
 }
 
-fn main() {
+fn default_case(
+    layout_cx: &mut LayoutContext<ColorBrush>,
+    font_cx: &mut FontContext,
+    display_scale: f32,
+    quantize: bool,
+    foreground_color: Color,
+) -> Layout<ColorBrush> {
     // The text we are going to style and lay out
     let text = String::from(
         "Some text here. Let's make it a bit longer so that line wrapping kicks in 😊. And also some اللغة العربية arabic text.\nThis is underline and strikethrough text",
     );
 
+    // Create a RangedBuilder
+    let mut builder = layout_cx.ranged_builder(font_cx, &text, display_scale, quantize);
+
+    // Set default text colour styles (set foreground text color)
+    let foreground_brush = ColorBrush {
+        color: foreground_color,
+    };
+    let brush_style = StyleProperty::Brush(foreground_brush);
+    builder.push_default(brush_style);
+
+    // Set default font family
+    // Back to SystemUI to debug variable font variations
+    builder.push_default(GenericFamily::Serif);
+    builder.push_default(LineHeight::FontSizeRelative(1.3));
+    builder.push_default(StyleProperty::FontSize(16.0));
+
+    // Set the first 4 characters to bold
+    let bold = FontWeight::new(600.0); // Use same value as old working commit
+    builder.push(StyleProperty::FontWeight(bold), 0..4);
+
+    // Set the underline & strikethrough style
+    builder.push(StyleProperty::Underline(true), 141..150);
+    builder.push(StyleProperty::Strikethrough(true), 155..168);
+
+    // Build the builder into a Layout
+    builder.build(&text)
+}
+
+fn arabic_case(
+    layout_cx: &mut LayoutContext<ColorBrush>,
+    font_cx: &mut FontContext,
+    display_scale: f32,
+    quantize: bool,
+    foreground_color: Color,
+) -> Layout<ColorBrush> {
+    let text = String::from("اللغة العربية");
+
+    // Create a RangedBuilder
+    let mut builder = layout_cx.ranged_builder(font_cx, &text, display_scale, quantize);
+
+    // Set default text colour styles (set foreground text color)
+    let foreground_brush = ColorBrush {
+        color: foreground_color,
+    };
+    let brush_style = StyleProperty::Brush(foreground_brush);
+    builder.push_default(brush_style);
+
+    // Set default font family
+    // Back to SystemUI to debug variable font variations
+    builder.push_default(GenericFamily::SystemUi);
+    builder.push_default(LineHeight::FontSizeRelative(1.3));
+    builder.push_default(StyleProperty::FontSize(16.0));
+
+    // Build the builder into a Layout
+    builder.build(&text)
+}
+
+fn main() {
     // The display scale for HiDPI rendering
     let display_scale = 1.0;
 
@@ -68,39 +133,20 @@ fn main() {
     let mut font_cx = FontContext::new();
     let mut layout_cx = LayoutContext::new();
 
-    // Create a RangedBuilder
-    let mut builder = layout_cx.ranged_builder(&mut font_cx, &text, display_scale, quantize);
-
-    // Set default text colour styles (set foreground text color)
-    let foreground_brush = ColorBrush {
-        color: foreground_color,
-    };
-    let brush_style = StyleProperty::Brush(foreground_brush);
-    builder.push_default(brush_style);
-
-    // Set default font family
-    // Back to SystemUI to debug variable font variations
-    builder.push_default(GenericFamily::SystemUi);
-    builder.push_default(LineHeight::FontSizeRelative(1.3));
-    builder.push_default(StyleProperty::FontSize(16.0));
-
-    // Set the first 4 characters to bold
-    let bold = FontWeight::new(600.0); // Use same value as old working commit
-    builder.push(StyleProperty::FontWeight(bold), 0..4);
-
-    // Set the underline & strikethrough style
-    builder.push(StyleProperty::Underline(true), 141..150);
-    builder.push(StyleProperty::Strikethrough(true), 155..168);
-
-    builder.push_inline_box(InlineBox {
-        id: 0,
-        index: 40,
-        width: 50.0,
-        height: 50.0,
-    });
-
-    // Build the builder into a Layout
-    let mut layout: Layout<ColorBrush> = builder.build(&text);
+    // let mut layout = default_case(
+    //     &mut layout_cx,
+    //     &mut font_cx,
+    //     display_scale,
+    //     quantize,
+    //     foreground_color,
+    // );
+    let mut layout = default_case(
+        &mut layout_cx,
+        &mut font_cx,
+        display_scale,
+        quantize,
+        foreground_color,
+    );
 
     // Perform layout (including bidi resolution and shaping) with start alignment
     layout.break_all_lines(max_advance);
@@ -144,7 +190,9 @@ fn main() {
         path.push("tiny_skia_render.png");
         path
     };
-    img.save_png(output_path).unwrap();
+    img.save_png(output_path.clone()).unwrap();
+
+    println!("Output saved to {}", output_path.display());
 
     // Debug: Dump layout data for analysis
     dump_layout_data(&layout, "Fixed Harfrust layout");

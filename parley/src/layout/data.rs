@@ -702,19 +702,26 @@ impl<B: Brush> LayoutData<B> {
 
         for &cluster_id in sorted_cluster_ids.iter() {
             // For each cluster, map it to the corresponding character using the cluster ID
-            // NOTE: cluster IDs are relative to the current text segment, not global
-            let char_idx_in_range = cluster_id as usize;
+            // IMPORTANT: cluster IDs in harfrust are BYTE OFFSETS, not character indices
+            let byte_offset_in_segment = cluster_id as usize;
 
-            if char_idx_in_range < char_range.len() {
-                let _absolute_char_idx = char_range.start + char_idx_in_range;
+            // Convert byte offset to character index within the segment
+            let char_idx_in_segment = if byte_offset_in_segment < source_text.len() {
+                source_text[..byte_offset_in_segment].chars().count()
+            } else {
+                source_text.chars().count().saturating_sub(1)
+            };
+
+            if char_idx_in_segment < char_range.len() {
+                let _absolute_char_idx = char_range.start + char_idx_in_segment;
 
                 // Get cluster info from swash text analysis
-                // Use char_idx_in_range (relative index) instead of absolute_char_idx
-                if let Some((char_info, style_index)) = infos.get(char_idx_in_range) {
+                // Use char_idx_in_segment (relative index) instead of absolute_char_idx
+                if let Some((char_info, style_index)) = infos.get(char_idx_in_segment) {
                     // ✅ Extract boundary from CharInfo and create our own cluster info!
                     let boundary = char_info.boundary();
                     // Use segment-relative index since source_text is only the current segment
-                    let segment_relative_char_idx = char_idx_in_range; // This is already relative to the segment
+                    let segment_relative_char_idx = char_idx_in_segment; // This is already relative to the segment
                     let source_char = source_text
                         .chars()
                         .nth(segment_relative_char_idx)

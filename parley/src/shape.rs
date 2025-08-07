@@ -4,6 +4,8 @@
 //! Text shaping implementation using HarfBuzz (via harfrust) for shaping
 //! and swash for text analysis and font selection.
 
+use core::str::FromStr;
+
 use alloc::vec::Vec;
 
 // Parley imports
@@ -18,6 +20,7 @@ use crate::util::nearly_eq;
 // External crate imports
 use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
+use skrifa::MetadataProvider;
 use swash::shape::partition::Selector as _;
 use swash::text::cluster::{CharCluster, CharInfo, Token};
 use swash::text::{Language, Script};
@@ -286,13 +289,13 @@ fn shape_item<'a, B: Brush>(
 
             if let Some(next_font) = font_selector.select_font(&mut cluster) {
                 if next_font != font {
-                    // Font changed - end current segment, start new one
                     current_font = Some(next_font);
                     break;
+                } else {
+                    // Same font - add to current segment
+                    segment_clusters.push(cluster.clone());
+                    segment_end_offset = cluster.range().end as usize - text_range.start;
                 }
-                // Same font - add to current segment
-                segment_clusters.push(cluster.clone());
-                segment_end_offset = cluster.range().end as usize - text_range.start;
             } else {
                 // No font found - skip this cluster
                 if !parser.next(&mut cluster) {
@@ -336,6 +339,13 @@ fn shape_item<'a, B: Brush>(
             let harf_font =
                 harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
 
+            // Debug: Print font information for Arabic text
+            if item.script == Script::Arabic {
+                println!("Arabic font family: {:?}", font.font.family);
+                println!("Font synthesis: {:?}", font.synthesis);
+                println!("Arabic bidi level: {}", item.level);
+            }
+
             // Create harfrust shaper
             // TODO: cache this upstream?
             let shaper_data = harfrust::ShaperData::new(&harf_font);
@@ -371,27 +381,68 @@ fn shape_item<'a, B: Brush>(
 
             let script = convert_script_to_harfrust(item.script);
             buffer.set_script(script);
-            println!("script: {:?}", script);
 
-            // Shape the text
-            let mut features: Vec<harfrust::Feature> = vec![];
+            // Set language if available for Arabic script
+            if let Some(lang) = item.locale {
+                // Convert swash Language to harfrust Language
+                let lang_tag = lang.language();
+                if let Ok(harf_lang) = lang_tag.parse::<harfrust::Language>() {
+                    println!("lang: {:?}", harf_lang);
 
-            // Add Arabic-specific OpenType features for proper shaping
-            if item.script == Script::Arabic {
-                features.extend([
-                    // Required Arabic features
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"ccmp"), 1, 0..), // Glyph composition/decomposition
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"isol"), 1, 0..), // Isolated forms
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"fina"), 1, 0..), // Final forms
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"medi"), 1, 0..), // Medial forms
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"init"), 1, 0..), // Initial forms
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"rlig"), 1, 0..), // Required ligatures
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"liga"), 1, 0..), // Standard ligatures
-                    harfrust::Feature::new(harfrust::Tag::from_be_bytes(*b"calt"), 1, 0..), // Contextual alternates
-                ]);
+                    buffer.set_language(harf_lang);
+                }
             }
 
-            let glyph_buffer = harf_shaper.shape(buffer, &features);
+            println!("script: {:?}", script);
+
+            // Configure Arabic shaping - let HarfBuzz handle features automatically
+            //if item.script == Script::Arabic {
+            //    println!("setting language for Arabic");
+            //    buffer.set_language(harfrust::Language::from_str("ar-SA").unwrap());
+
+            //    // Let HarfBuzz apply default Arabic features automatically
+            //    // HarfBuzz has a built-in Arabic shaper that should handle contextual forms
+            //    println!("Using HarfBuzz automatic Arabic shaping");
+
+            //    // Don't manually specify features - let HarfBuzz's Arabic shaper handle it
+            //    // This should automatically apply: ccmp, isol, fina, medi, init, rlig, etc.
+            //}
+
+            let glyph_buffer = harf_shaper.shape(buffer, &[]);
+
+            // Debug: Print shaping results for Arabic text
+            if item.script == Script::Arabic {
+                let glyph_infos = glyph_buffer.glyph_infos();
+                let glyph_positions = glyph_buffer.glyph_positions();
+                println!(
+                    "Arabic shaping results for '{}': {} glyphs",
+                    part_for_shaping,
+                    glyph_infos.len()
+                );
+
+                // Print the Unicode codepoints we're shaping
+                print!("  Unicode codepoints: ");
+                for ch in part_for_shaping.chars() {
+                    print!("U+{:04X} ", ch as u32);
+                }
+                println!();
+
+                for (i, (info, pos)) in glyph_infos.iter().zip(glyph_positions.iter()).enumerate() {
+                    println!(
+                        "  Glyph {}: id={}, cluster={}, advance={}",
+                        i, info.glyph_id, info.cluster, pos.x_advance
+                    );
+                }
+
+                // Check if glyph IDs are reasonable (not 0 which would indicate missing glyphs)
+                let missing_glyphs = glyph_infos.iter().filter(|info| info.glyph_id == 0).count();
+                if missing_glyphs > 0 {
+                    println!(
+                        "  WARNING: {} glyphs are missing (glyph ID 0)!",
+                        missing_glyphs
+                    );
+                }
+            }
 
             // Calculate character range for this part within the current item
             let char_start = char_range.start + item_text[..part_start].chars().count();
