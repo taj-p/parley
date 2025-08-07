@@ -587,13 +587,7 @@ impl<B: Brush> LayoutData<B> {
                 y: (glyph_pos.y_offset as f32) * scale_factor,
                 advance: (glyph_pos.x_advance as f32) * scale_factor,
                 cluster_index: glyph_info.cluster,
-                flags: GlyphFlags::from_bits_truncate(
-                    (glyph_info.unsafe_to_break() as u8) * GlyphFlags::UNSAFE_TO_BREAK.bits()
-                        | (glyph_info.safe_to_insert_tatweel() as u8)
-                            * GlyphFlags::SAFE_TO_INSERT_TATWEEL.bits()
-                        | (glyph_info.unsafe_to_concat() as u8)
-                            * GlyphFlags::UNSAFE_TO_CONCAT.bits(),
-                ),
+                flags: GlyphFlags::from(glyph_info),
             };
 
             current_cluster_advance += glyph.advance;

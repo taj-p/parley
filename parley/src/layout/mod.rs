@@ -289,6 +289,16 @@ bitflags! {
     }
 }
 
+impl From<&harfrust::GlyphInfo> for GlyphFlags {
+    fn from(info: &harfrust::GlyphInfo) -> Self {
+        GlyphFlags::from_bits_truncate(
+            info.unsafe_to_break() as u8 * GlyphFlags::UNSAFE_TO_BREAK.bits()
+                | info.safe_to_insert_tatweel() as u8 * GlyphFlags::SAFE_TO_INSERT_TATWEEL.bits()
+                | info.unsafe_to_concat() as u8 * GlyphFlags::UNSAFE_TO_CONCAT.bits(),
+        )
+    }
+}
+
 impl Glyph {
     /// Returns the index into the layout style collection.
     pub fn style_index(&self) -> usize {
