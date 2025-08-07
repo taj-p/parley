@@ -49,7 +49,7 @@ fn default_case(
 ) -> Layout<ColorBrush> {
     // The text we are going to style and lay out
     let text = String::from(
-        "Some text here. Let's make it a bit longer so that line wrapping kicks in 😊. And also some اللغة العربية arabic text.\nThis is underline and strikethrough text",
+        "Some text here. Let's make it a bit longer so that line wrapping kicks in. And also some اللغة العربية arabic text.\nThis is underline and strikethrough text",
     );
 
     // Create a RangedBuilder
@@ -73,8 +73,15 @@ fn default_case(
     builder.push(StyleProperty::FontWeight(bold), 0..4);
 
     // Set the underline & strikethrough style
-    builder.push(StyleProperty::Underline(true), 141..150);
-    builder.push(StyleProperty::Strikethrough(true), 155..168);
+    builder.push(StyleProperty::Underline(true), 136..145);
+    builder.push(StyleProperty::Strikethrough(true), 150..163);
+
+    builder.push_inline_box(InlineBox {
+        id: 0,
+        index: 40,
+        width: 50.0,
+        height: 50.0,
+    });
 
     // Build the builder into a Layout
     builder.build(&text)
@@ -195,7 +202,7 @@ fn main() {
     println!("Output saved to {}", output_path.display());
 
     // Debug: Dump layout data for analysis
-    dump_layout_data(&layout, "Fixed Harfrust layout");
+    dump_layout_data(&layout, "Mixed Script Layout");
 }
 
 // Debug function to dump layout data for comparison
