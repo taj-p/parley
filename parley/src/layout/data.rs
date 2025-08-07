@@ -535,9 +535,6 @@ impl<B: Brush> LayoutData<B> {
             coords_range: coords_start..coords_end,
             text_range,
             bidi_level,
-            // changed: Commenting out harfrust-specific fields for compilation
-            // direction: Direction::LTR, // Default to LTR for now
-            // script: Script::LATIN,   // Default to LATIN for now
             cluster_range,
             glyph_start: self.glyphs.len(),
             metrics,
