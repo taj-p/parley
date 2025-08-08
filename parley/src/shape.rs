@@ -18,7 +18,6 @@ use crate::util::nearly_eq;
 // External crate imports
 use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
-use swash::shape::partition::Selector as _;
 use swash::text::cluster::{CharCluster, CharInfo, Token};
 use swash::text::{Language, Script};
 use swash::{FontRef, Synthesis};
@@ -443,13 +442,8 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
             features,
         }
     }
-}
 
-// TODO: This doesn't need to implement the Selector trait.
-impl<B: Brush> swash::shape::partition::Selector for FontSelector<'_, '_, B> {
-    type SelectedFont = SelectedFont;
-
-    fn select_font(&mut self, cluster: &mut CharCluster) -> Option<Self::SelectedFont> {
+    fn select_font(&mut self, cluster: &mut CharCluster) -> Option<SelectedFont> {
         let style_index = cluster.user_data() as u16;
         let is_emoji = cluster.info().is_emoji();
         if style_index != self.style_index || is_emoji || self.fonts_id.is_none() {
