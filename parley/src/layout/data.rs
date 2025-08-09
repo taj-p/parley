@@ -546,7 +546,8 @@ impl<B: Brush> LayoutData<B> {
         let mut char_idx = if is_rtl { infos.len() - 1 } else { 0 };
 
         let mut current_cluster_id: Option<u32> = None;
-        let mut current_cluster_glyph_indices = Vec::new();
+        let mut current_client_glyph_visual_start = visual_idx;
+        let mut current_cluster_glyph_count = 0;
         let mut current_cluster_advance = 0.0;
 
         let mut run_advance = 0.0;
@@ -580,10 +581,6 @@ impl<B: Brush> LayoutData<B> {
                 // Finalize the previous cluster if it exists
                 if let Some(_) = current_cluster_id {
                     let char_byte_end = char_indices_iter.next().unwrap();
-                    if is_rtl {
-                        current_cluster_glyph_indices.reverse();
-                    }
-
                     let cluster_char_info = current_cluster_char_info.unwrap();
                     let cluster_data = self.create_cluster_data(
                         start_byte_idx.1,
@@ -591,7 +588,12 @@ impl<B: Brush> LayoutData<B> {
                         start_byte_idx.0,
                         char_byte_end.0,
                         cluster_char_info.1,
-                        &current_cluster_glyph_indices,
+                        current_cluster_glyph_count,
+                        if is_rtl {
+                            global_glyph_idx + 1
+                        } else {
+                            current_client_glyph_visual_start
+                        },
                         current_cluster_advance,
                         run.glyph_start,
                     );
@@ -601,7 +603,6 @@ impl<B: Brush> LayoutData<B> {
 
                 current_cluster_id = Some(glyph_info.cluster);
                 current_cluster_char_info = Some(char_info);
-                current_cluster_glyph_indices.clear();
                 char_idx = if is_rtl {
                     char_idx.saturating_sub(1)
                 } else {
@@ -609,17 +610,15 @@ impl<B: Brush> LayoutData<B> {
                 };
                 run_advance += current_cluster_advance;
                 current_cluster_advance = 0.0;
+                current_cluster_glyph_count = 0;
+                current_client_glyph_visual_start = global_glyph_idx;
             }
 
-            current_cluster_glyph_indices.push(global_glyph_idx);
+            current_cluster_glyph_count += 1;
         }
 
         // Finalize the last cluster
         if let Some(_) = current_cluster_id {
-            if is_rtl {
-                current_cluster_glyph_indices.reverse();
-            }
-
             let cluster_char_info = current_cluster_char_info.unwrap();
             let cluster_data = self.create_cluster_data(
                 start_byte_idx.1,
@@ -627,7 +626,12 @@ impl<B: Brush> LayoutData<B> {
                 start_byte_idx.0,
                 source_text.len(),
                 cluster_char_info.1,
-                &current_cluster_glyph_indices,
+                current_cluster_glyph_count,
+                if is_rtl {
+                    glyph_start_idx
+                } else {
+                    current_client_glyph_visual_start
+                },
                 current_cluster_advance,
                 run.glyph_start,
             );
@@ -657,7 +661,8 @@ impl<B: Brush> LayoutData<B> {
         char_byte_start: usize,
         char_byte_end: usize,
         style_index: u16,
-        glyph_indices: &[usize],
+        glyph_count: usize,
+        visual_start: usize,
         cluster_advance: f32,
         run_glyph_start: usize,
     ) -> ClusterData {
@@ -666,11 +671,11 @@ impl<B: Brush> LayoutData<B> {
             info: cluster_info,
             flags: 0, // TODO
             style_index,
-            glyph_len: glyph_indices.len() as u8,
+            glyph_len: glyph_count as u8,
             text_len: (char_byte_end - char_byte_start) as u8,
             advance: cluster_advance,
             text_offset: char_byte_start as u16,
-            glyph_offset: (glyph_indices[0] - run_glyph_start) as u16,
+            glyph_offset: (visual_start - run_glyph_start) as u16,
         }
     }
 
