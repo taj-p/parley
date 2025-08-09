@@ -561,6 +561,7 @@ impl<B: Brush> LayoutData<B> {
 
         let mut current_cluster_char_info: Option<&(swash::text::cluster::CharInfo, u16)> = None;
 
+        // Cluster processing loop
         for _logical_idx in 0..glyph_infos.len() {
             let glyph_info = &glyph_infos[visual_idx];
             let char_info = &infos[char_idx];
