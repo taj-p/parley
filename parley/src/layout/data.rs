@@ -522,6 +522,8 @@ impl<B: Brush> LayoutData<B> {
         }
         let glyph_positions = glyph_buffer.glyph_positions();
         let scale_factor = font_size / units_per_em;
+        let glyph_start_idx = self.glyphs.len();
+
         self.glyphs
             .extend(glyph_infos.iter().zip(glyph_positions.iter()).map(
                 |(glyph_info, glyph_pos)| {
@@ -547,8 +549,6 @@ impl<B: Brush> LayoutData<B> {
         let mut cluster_start_char = char_indices_iter.next().unwrap();
 
         let cluster_range_start = self.clusters.len();
-
-        let glyph_start_idx = self.glyphs.len();
         let mut current_cluster_id: Option<u32> = None;
         let mut current_cluster_data: Option<ClusterData> = None;
 
