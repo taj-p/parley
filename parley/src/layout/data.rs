@@ -415,12 +415,9 @@ impl<B: Brush> LayoutData<B> {
         bidi_level: u8,
         word_spacing: f32,
         letter_spacing: f32,
-        // NEW: Add text analysis data needed for proper clustering
         source_text: &str,
         infos: &[(swash::text::cluster::CharInfo, u16)], // From text analysis
         text_range: Range<usize>,                        // The text range this run covers
-        _char_range: Range<usize>,                       // Range into infos array
-        // NEW: Add actual font variations used during shaping
         variations: &[harfrust::Variation],
     ) {
         // Store font variations as normalized coordinates FIRST (before font moves)

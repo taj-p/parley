@@ -300,9 +300,6 @@ fn shape_item<'a, B: Brush>(
 
         // Shape this font segment with harfrust
         let segment_text = &item_text[segment_start_offset..segment_end_offset];
-        let _segment_text_range =
-            (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset);
-
         // Shape the entire segment text including newlines
         // The line breaking algorithm will handle newlines automatically
 
@@ -356,20 +353,12 @@ fn shape_item<'a, B: Brush>(
 
         let glyph_buffer = harf_shaper.shape(buffer, &[]);
 
-        // Calculate character range for this segment within the current item
-        let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
-        let char_end = char_start + segment_text.chars().count();
-        let segment_char_range = char_start..char_end;
-
         // Extract relevant CharInfo slice for this segment
+        let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
         let segment_char_start = char_start - char_range.start;
         let segment_char_count = segment_text.chars().count();
-        let segment_infos = if segment_char_start < item_infos.len() {
-            let end_idx = (segment_char_start + segment_char_count).min(item_infos.len());
-            &item_infos[segment_char_start..end_idx]
-        } else {
-            &[]
-        };
+        let segment_infos =
+            &item_infos[segment_char_start..(segment_char_start + segment_char_count)];
 
         // Push harfrust-shaped run for the entire segment
         layout.data.push_run_from_harfrust(
@@ -384,7 +373,6 @@ fn shape_item<'a, B: Brush>(
             segment_text,
             segment_infos,
             (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset),
-            segment_char_range,
             &variations,
         );
     }
