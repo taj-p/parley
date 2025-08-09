@@ -513,19 +513,14 @@ impl<B: Brush> LayoutData<B> {
             advance: 0.,
         };
 
-        // Get harfrust glyph data
-        let glyph_infos = glyph_buffer.glyph_infos();
-        let glyph_positions = glyph_buffer.glyph_positions();
+        // Process glyphs in visual order (HarfBuzz output) but store clusters in logical order
 
+        let glyph_infos = glyph_buffer.glyph_infos();
         if glyph_infos.is_empty() {
             return;
         }
-
-        // Process glyphs in visual order (HarfBuzz output) but store clusters in logical order
-        // Step 1: Add all glyphs to maintain visual order for rendering
+        let glyph_positions = glyph_buffer.glyph_positions();
         let scale_factor = font_size / units_per_em;
-        let glyph_start_idx = self.glyphs.len();
-
         self.glyphs
             .extend(glyph_infos.iter().zip(glyph_positions.iter()).map(
                 |(glyph_info, glyph_pos)| {
@@ -545,21 +540,16 @@ impl<B: Brush> LayoutData<B> {
         let mut visual_idx = if is_rtl { glyph_infos.len() - 1 } else { 0 };
         let mut char_idx = if is_rtl { infos.len() - 1 } else { 0 };
 
-        let mut current_cluster_id: Option<u32> = None;
-        let mut current_cluster_glyph_idx_start = glyph_start_idx + visual_idx;
-        let mut current_cluster_glyph_count = 0;
-        let mut current_cluster_advance = 0.0;
-
         let mut run_advance = 0.0;
 
         let mut char_indices_iter = source_text.char_indices();
-        let mut start_byte_idx = char_indices_iter.next().unwrap();
+        let mut cluster_start_char = char_indices_iter.next().unwrap();
 
         let cluster_range_start = self.clusters.len();
 
-        assert_eq!(glyph_infos.len(), glyph_positions.len());
-
-        let mut current_cluster_char_info: Option<&(swash::text::cluster::CharInfo, u16)> = None;
+        let glyph_start_idx = self.glyphs.len();
+        let mut current_cluster_id: Option<u32> = None;
+        let mut current_cluster_data: Option<ClusterData> = None;
 
         // Cluster processing loop
         for _logical_idx in 0..glyph_infos.len() {
@@ -578,65 +568,61 @@ impl<B: Brush> LayoutData<B> {
             // Check if we're starting a new cluster
             if current_cluster_id != Some(glyph_info.cluster) {
                 // Finalize the previous cluster if it exists
-                if let Some(_) = current_cluster_id {
-                    let char_byte_end = char_indices_iter.next().unwrap();
-                    let cluster_char_info = current_cluster_char_info.unwrap();
-                    let cluster_data = self.create_cluster_data(
-                        start_byte_idx.1,
-                        cluster_char_info.0.boundary(),
-                        start_byte_idx.0,
-                        char_byte_end.0,
-                        cluster_char_info.1,
-                        current_cluster_glyph_count,
-                        if is_rtl {
-                            global_glyph_idx + 1
-                        } else {
-                            current_cluster_glyph_idx_start
-                        },
-                        current_cluster_advance,
-                        run.glyph_start,
-                    );
-                    self.clusters.push(cluster_data);
-                    start_byte_idx = char_byte_end;
+                if let Some(mut finalized_cluster) = current_cluster_data.take() {
+                    let cluster_end_char = char_indices_iter.next().unwrap();
+                    finalized_cluster.text_len = (cluster_end_char.0 - cluster_start_char.0) as u8;
+                    // For RTL, we need to update glyph_offset to point to the first glyph in visual order
+                    if is_rtl {
+                        finalized_cluster.glyph_offset =
+                            (global_glyph_idx + 1 - run.glyph_start) as u16; // +1 to choose the prior visual index
+                    }
+                    self.clusters.push(finalized_cluster);
+                    run_advance += finalized_cluster.advance;
+                    cluster_start_char = cluster_end_char;
                 }
 
+                // Initialize new cluster data
                 current_cluster_id = Some(glyph_info.cluster);
-                current_cluster_char_info = Some(char_info);
                 char_idx = if is_rtl {
                     char_idx.saturating_sub(1)
                 } else {
                     (char_idx + 1).min(infos.len() - 1)
                 };
-                run_advance += current_cluster_advance;
-                current_cluster_advance = 0.0;
-                current_cluster_glyph_count = 0;
-                current_cluster_glyph_idx_start = global_glyph_idx;
+
+                current_cluster_data = Some(ClusterData {
+                    info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+                    flags: 0, // TODO
+                    style_index: char_info.1,
+                    glyph_len: 0, // Tracked in loop
+                    text_len: 0,  // Will be set when finalizing
+                    glyph_offset: if is_rtl {
+                        0 // Will be calculated when finalizing
+                    } else {
+                        (global_glyph_idx - run.glyph_start) as u16
+                    },
+                    text_offset: cluster_start_char.0 as u16,
+                    advance: 0.0, // Tracked in loop
+                });
             }
 
-            current_cluster_advance += self.glyphs[global_glyph_idx].advance;
-            current_cluster_glyph_count += 1;
+            // Update current cluster with this glyph
+            debug_assert!(
+                current_cluster_data.is_some(),
+                "current cluster should always be set in above if block"
+            );
+            let cluster_data = current_cluster_data.as_mut().unwrap();
+            cluster_data.advance += self.glyphs[global_glyph_idx].advance;
+            cluster_data.glyph_len += 1;
         }
 
         // Finalize the last cluster
-        if let Some(_) = current_cluster_id {
-            let cluster_char_info = current_cluster_char_info.unwrap();
-            let cluster_data = self.create_cluster_data(
-                start_byte_idx.1,
-                cluster_char_info.0.boundary(),
-                start_byte_idx.0,
-                source_text.len(),
-                cluster_char_info.1,
-                current_cluster_glyph_count,
-                if is_rtl {
-                    glyph_start_idx
-                } else {
-                    current_cluster_glyph_idx_start
-                },
-                current_cluster_advance,
-                run.glyph_start,
-            );
-            self.clusters.push(cluster_data);
-            run_advance += current_cluster_advance;
+        if let Some(mut finalized_cluster) = current_cluster_data.take() {
+            finalized_cluster.text_len = (source_text.len() - cluster_start_char.0) as u8;
+            run_advance += finalized_cluster.advance;
+            if is_rtl {
+                finalized_cluster.glyph_offset = 0;
+            }
+            self.clusters.push(finalized_cluster);
         }
 
         run.cluster_range = cluster_range_start..self.clusters.len();
@@ -650,32 +636,6 @@ impl<B: Brush> LayoutData<B> {
                 index: self.runs.len() - 1,
                 bidi_level,
             });
-        }
-    }
-
-    // Helper method to create cluster data from cluster information
-    fn create_cluster_data(
-        &mut self,
-        source_char: char,
-        boundary: Boundary,
-        char_byte_start: usize,
-        char_byte_end: usize,
-        style_index: u16,
-        glyph_count: usize,
-        visual_start: usize,
-        cluster_advance: f32,
-        run_glyph_start: usize,
-    ) -> ClusterData {
-        let cluster_info = HarfClusterInfo::new(Some(boundary), source_char);
-        ClusterData {
-            info: cluster_info,
-            flags: 0, // TODO
-            style_index,
-            glyph_len: glyph_count as u8,
-            text_len: (char_byte_end - char_byte_start) as u8,
-            advance: cluster_advance,
-            text_offset: char_byte_start as u16,
-            glyph_offset: (visual_start - run_glyph_start) as u16,
         }
     }
 
