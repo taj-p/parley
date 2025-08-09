@@ -546,7 +546,7 @@ impl<B: Brush> LayoutData<B> {
         let mut char_idx = if is_rtl { infos.len() - 1 } else { 0 };
 
         let mut current_cluster_id: Option<u32> = None;
-        let mut current_client_glyph_visual_start = visual_idx;
+        let mut current_cluster_glyph_idx_start = glyph_start_idx + visual_idx;
         let mut current_cluster_glyph_count = 0;
         let mut current_cluster_advance = 0.0;
 
@@ -591,7 +591,7 @@ impl<B: Brush> LayoutData<B> {
                         if is_rtl {
                             global_glyph_idx + 1
                         } else {
-                            current_client_glyph_visual_start
+                            current_cluster_glyph_idx_start
                         },
                         current_cluster_advance,
                         run.glyph_start,
@@ -610,7 +610,7 @@ impl<B: Brush> LayoutData<B> {
                 run_advance += current_cluster_advance;
                 current_cluster_advance = 0.0;
                 current_cluster_glyph_count = 0;
-                current_client_glyph_visual_start = global_glyph_idx;
+                current_cluster_glyph_idx_start = global_glyph_idx;
             }
 
             current_cluster_advance += self.glyphs[global_glyph_idx].advance;
@@ -630,7 +630,7 @@ impl<B: Brush> LayoutData<B> {
                 if is_rtl {
                     glyph_start_idx
                 } else {
-                    current_client_glyph_visual_start
+                    current_cluster_glyph_idx_start
                 },
                 current_cluster_advance,
                 run.glyph_start,
