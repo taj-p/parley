@@ -443,6 +443,7 @@ impl<B: Brush> LayoutData<B> {
                 index
             });
 
+        // TODO: I think we need to calculate these values upstream. It's likely we're going to be calculating them duplicately.
         // TODO(taj): Why do we need self.fonts? And do we need to do this here? And should I store the font ref alongside the font?
         let font = &self.fonts[font_index];
         let font = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap(); // TODO(taj): Handle unwrap.
