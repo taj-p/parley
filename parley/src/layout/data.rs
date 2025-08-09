@@ -569,8 +569,6 @@ impl<B: Brush> LayoutData<B> {
             let global_glyph_idx = glyph_start_idx + visual_idx;
             self.glyphs[global_glyph_idx].style_index = char_info.1;
 
-            current_cluster_advance += self.glyphs[global_glyph_idx].advance;
-
             visual_idx = if is_rtl {
                 visual_idx.saturating_sub(1)
             } else {
@@ -615,6 +613,7 @@ impl<B: Brush> LayoutData<B> {
                 current_client_glyph_visual_start = global_glyph_idx;
             }
 
+            current_cluster_advance += self.glyphs[global_glyph_idx].advance;
             current_cluster_glyph_count += 1;
         }
 
