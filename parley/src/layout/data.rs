@@ -538,6 +538,11 @@ impl<B: Brush> LayoutData<B> {
 
         let is_rtl = bidi_level & 1 != 0;
         let mut visual_idx = if is_rtl { glyph_infos.len() - 1 } else { 0 };
+        let step_fn = if is_rtl {
+            |i: usize| i.saturating_sub(1)
+        } else {
+            |i: usize| i + 1
+        };
         let mut char_idx = if is_rtl { infos.len() - 1 } else { 0 };
 
         let mut run_advance = 0.0;
@@ -557,11 +562,7 @@ impl<B: Brush> LayoutData<B> {
             let global_glyph_idx = glyph_start_idx + visual_idx;
             self.glyphs[global_glyph_idx].style_index = char_info.1;
 
-            visual_idx = if is_rtl {
-                visual_idx.saturating_sub(1)
-            } else {
-                visual_idx + 1
-            };
+            visual_idx = step_fn(visual_idx);
 
             // Check if we're starting a new cluster
             if current_cluster_id != Some(glyph_info.cluster) {
@@ -581,11 +582,7 @@ impl<B: Brush> LayoutData<B> {
 
                 // Initialize new cluster data
                 current_cluster_id = Some(glyph_info.cluster);
-                char_idx = if is_rtl {
-                    char_idx.saturating_sub(1)
-                } else {
-                    (char_idx + 1).min(infos.len() - 1)
-                };
+                char_idx = step_fn(char_idx);
 
                 current_cluster_data = Some(ClusterData {
                     info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
