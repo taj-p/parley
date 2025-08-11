@@ -492,6 +492,7 @@ impl<B: Brush> LayoutData<B> {
 
         let is_rtl = bidi_level & 1 == 1;
 
+        // TODO: Maybe consider using 1 block for both LTR and RTL text?
         if !is_rtl {
             let mut char_indices_iter = source_text.char_indices();
             let mut cluster_start_char = char_indices_iter.next().unwrap();
@@ -881,8 +882,7 @@ impl FontMetrics {
             (i16::default(), i16::default())
         };
 
-        let mut strikethrough_offset = i16::default();
-        let mut strikethrough_size = i16::default();
+        let mut strikethrough_offset = 0;
 
         if let Ok(os2) = font.os2() {
             if os2
@@ -901,7 +901,6 @@ impl FontMetrics {
                 };
             } else {
                 strikethrough_offset = os2.y_strikeout_position();
-                strikethrough_size = os2.y_strikeout_size();
             }
         }
         if let Ok(hhea) = font.hhea() {
@@ -911,7 +910,7 @@ impl FontMetrics {
                 leading: hhea.line_gap().to_i16(),
                 units_per_em,
                 strikethrough_offset,
-                strikethrough_size,
+                strikethrough_size: underline_size,
                 underline_offset,
                 underline_size,
             };
