@@ -108,7 +108,7 @@ fn to_whitespace(c: char) -> Whitespace {
         '\t' => Whitespace::Tab,
         '\n' => Whitespace::Newline,
         '\r' => Whitespace::Newline,
-        '\u{00A0}' => Whitespace::Space, // Non-breaking space
+        '\u{00A0}' => Whitespace::NoBreakSpace, // Non-breaking space
         _ => Whitespace::None,
     }
 }
@@ -132,6 +132,7 @@ pub(crate) struct ClusterData {
     /// Style index for this cluster
     pub(crate) style_index: u16,
     /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
+    /// TODO: 0xFF currently not supported.
     pub(crate) glyph_len: u8,
     /// Number of text bytes in this cluster
     pub(crate) text_len: u8,
@@ -663,7 +664,7 @@ impl<B: Brush> LayoutData<B> {
 
             // Reverse clusters into logical order for RTL
             self.clusters.extend(clusters.drain(..).rev());
-            // Return scratch cluster to allocation.
+            // Return scratch cluster allocation.
             self.scratch_clusters = clusters;
         }
 
