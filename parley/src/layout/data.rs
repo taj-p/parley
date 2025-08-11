@@ -170,7 +170,7 @@ impl ClusterData {
 }
 
 /// Harfrust-based run data (updated to use harfrust types)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RunData {
     /// Index of the font for the run.
     pub(crate) font_index: usize,
@@ -307,7 +307,7 @@ pub(crate) struct LayoutItem {
     pub(crate) bidi_level: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutData<B: Brush> {
     pub(crate) scale: f32,
     pub(crate) quantize: bool,
