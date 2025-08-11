@@ -332,7 +332,10 @@ fn shape_item<'a, B: Brush>(
         let mut buffer = harfrust::UnicodeBuffer::new();
 
         // Use the entire segment text including newlines
-        buffer.push_str(segment_text);
+        for (i, ch) in segment_text.chars().enumerate() {
+            // Ensure that each cluster's index matches the index into `infos`.
+            buffer.add(ch, i as u32);
+        }
 
         let direction = if item.level & 1 != 0 {
             harfrust::Direction::RightToLeft

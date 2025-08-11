@@ -274,8 +274,6 @@ pub struct Glyph {
     pub y: f32,
     /// Horizontal advance to the next glyph position
     pub advance: f32,
-    /// Cluster index this glyph belongs to (for mapping back to text)
-    pub cluster_index: u32,
     /// Glyph flags from harfrust shaping (e.g., unsafe_to_break, etc.)
     pub flags: GlyphFlags,
 }

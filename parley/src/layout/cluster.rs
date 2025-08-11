@@ -174,7 +174,6 @@ impl<'a, B: Brush> Cluster<'a, B> {
                 x: 0.,
                 y: 0.,
                 advance: self.data.advance,
-                cluster_index: 0,
                 flags: GlyphFlags::empty(),
             }))
         } else {
