@@ -82,14 +82,7 @@ impl HarfClusterInfo {
 
     /// Get whitespace type
     pub(crate) fn whitespace(&self) -> Whitespace {
-        match self.source_char {
-            ' ' => Whitespace::Space,
-            '\t' => Whitespace::Tab,
-            '\n' => Whitespace::Newline,
-            '\r' => Whitespace::Newline,
-            '\u{00A0}' => Whitespace::Space, // Non-breaking space
-            _ => Whitespace::None,
-        }
+        to_whitespace(self.source_char)
     }
 
     /// Check if this is a word boundary
@@ -109,6 +102,17 @@ impl HarfClusterInfo {
     }
 }
 
+fn to_whitespace(c: char) -> Whitespace {
+    match c {
+        ' ' => Whitespace::Space,
+        '\t' => Whitespace::Tab,
+        '\n' => Whitespace::Newline,
+        '\r' => Whitespace::Newline,
+        '\u{00A0}' => Whitespace::Space, // Non-breaking space
+        _ => Whitespace::None,
+    }
+}
+
 impl Default for HarfClusterInfo {
     fn default() -> Self {
         Self {
@@ -119,7 +123,7 @@ impl Default for HarfClusterInfo {
 }
 
 /// Cluster data - uses swash analysis with harfrust shaping
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub(crate) struct ClusterData {
     /// Cluster information from swash text analysis (using our own type)
     pub(crate) info: HarfClusterInfo,
