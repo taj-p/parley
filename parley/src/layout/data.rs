@@ -8,6 +8,7 @@ use crate::util::nearly_zero;
 use crate::{Font, GlyphFlags, OverflowWrap};
 use core::ops::Range;
 
+use skrifa::raw::tables::os2::SelectionFlags;
 use swash::text::cluster::{Boundary, Whitespace};
 
 use alloc::vec::Vec;
@@ -17,12 +18,6 @@ use alloc::vec::Vec;
 use core_maths::CoreFloat;
 
 use skrifa::raw::TableProvider;
-
-/// Default units per em for font scaling.
-///
-/// This is used as a fallback when the actual font units per em cannot be determined.
-/// Most TrueType fonts use 2048, while PostScript fonts typically use 1000.
-const DEFAULT_UNITS_PER_EM: f32 = 2048.0;
 
 /// Simple synthesis specification for HarfBuzz compatibility
 ///
@@ -445,52 +440,17 @@ impl<B: Brush> LayoutData<B> {
         let font = &self.fonts[font_index];
         let font = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap(); // TODO(taj): Handle unwrap.
 
-        let (ascent, descent, leading, strikethrough_offset, strikethrough_size) =
-            // This copies harfrust's behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60)
-            // but it's unclear to me whether we should use os2 only if the appropriate fs selection "use os2 metrics" bit is set.
-            if let Ok(os2) = font.os2() {
-                (
-                    os2.s_typo_ascender(),
-                    os2.s_typo_descender(),
-                    os2.s_typo_line_gap(),
-                    os2.y_strikeout_position(),
-                    os2.y_strikeout_size(),
-                )
-            } else if let Ok(hhea) = font.hhea() {
-                (
-                    hhea.ascender().to_i16(),
-                    hhea.descender().to_i16(),
-                    hhea.line_gap().to_i16(),
-                    i16::default(),
-                    i16::default(),
-                )
-            } else {
-                todo!()
-            };
+        let metrics = FontMetrics::from(&font);
+        let units_per_em = metrics.units_per_em as f32;
 
-        let (underline_offset, underline_size) = if let Ok(post) = font.post() {
-            // TODO: What to do if these tables don't exist? Should we actually err?
-            (
-                post.underline_position().to_i16(),
-                post.underline_thickness().to_i16(),
-            )
-        } else {
-            (i16::default(), i16::default())
-        };
-
-        // For now, create default metrics since we don't have them from harfrust
-        let units_per_em = font
-            .head()
-            .map(|h| h.units_per_em() as f32)
-            .unwrap_or(DEFAULT_UNITS_PER_EM);
         let metrics = RunMetrics {
-            ascent: font_size * ascent as f32 / units_per_em,
-            descent: -font_size * descent as f32 / units_per_em,
-            leading: font_size * leading as f32 / units_per_em,
-            underline_offset: font_size * underline_offset as f32 / units_per_em,
-            underline_size: font_size * underline_size as f32 / units_per_em,
-            strikethrough_offset: font_size * strikethrough_offset as f32 / units_per_em,
-            strikethrough_size: font_size * strikethrough_size as f32 / units_per_em,
+            ascent: font_size * metrics.ascent as f32 / units_per_em,
+            descent: -font_size * metrics.descent as f32 / units_per_em,
+            leading: font_size * metrics.leading as f32 / units_per_em,
+            underline_offset: font_size * metrics.underline_offset as f32 / units_per_em,
+            underline_size: font_size * metrics.underline_size as f32 / units_per_em,
+            strikethrough_offset: font_size * metrics.strikethrough_offset as f32 / units_per_em,
+            strikethrough_size: font_size * metrics.strikethrough_size as f32 / units_per_em,
         };
 
         let cluster_range = self.clusters.len()..self.clusters.len();
@@ -588,15 +548,15 @@ impl<B: Brush> LayoutData<B> {
                     info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
                     flags: 0, // TODO
                     style_index: char_info.1,
-                    glyph_len: 0, // Tracked in loop
-                    text_len: 0,  // Will be set when finalizing
+                    glyph_len: 0, // Accumulated in loop
+                    text_len: 0,  // Set when finalizing
                     glyph_offset: if is_rtl {
-                        0 // Will be calculated when finalizing
+                        0 // Set when finalizing
                     } else {
                         (global_glyph_idx - run.glyph_start) as u16
                     },
                     text_offset: cluster_start_char.0 as u16,
-                    advance: 0.0, // Tracked in loop
+                    advance: 0.0, // Accumulated in loop
                 });
             }
 
@@ -776,5 +736,80 @@ impl<B: Brush> LayoutData<B> {
             let normalized_coord = (clamped * 16384.0) as i16;
             self.coords.push(normalized_coord);
         }
+    }
+}
+
+struct FontMetrics {
+    ascent: i16,
+    descent: i16,
+    leading: i16,
+
+    units_per_em: u16,
+
+    strikethrough_offset: i16,
+    strikethrough_size: i16,
+
+    underline_offset: i16,
+    underline_size: i16,
+}
+
+impl FontMetrics {
+    fn from(font: &skrifa::FontRef<'_>) -> Self {
+        // This _does not_ copy harfrust's behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60)
+        // but it's unclear to me whether we should use os2 only if the appropriate fs selection "use os2 metrics" bit is set.
+
+        // Default units per em for font scaling.
+        //
+        // This is used as a fallback when the actual font units per em cannot be determined.
+        // Most TrueType fonts use 2048, while PostScript fonts typically use 1000.
+        const DEFAULT_UNITS_PER_EM: u16 = 2048;
+
+        let units_per_em = font
+            .head()
+            .map(|h| h.units_per_em())
+            .unwrap_or(DEFAULT_UNITS_PER_EM);
+
+        let (underline_offset, underline_size) = if let Ok(post) = font.post() {
+            // TODO: What to do if these tables don't exist? Should we actually err?
+            (
+                post.underline_position().to_i16(),
+                post.underline_thickness().to_i16(),
+            )
+        } else {
+            (i16::default(), i16::default())
+        };
+
+        if let Ok(os2) = font.os2() {
+            if os2
+                .fs_selection()
+                .contains(SelectionFlags::USE_TYPO_METRICS)
+            {
+                return Self {
+                    ascent: os2.s_typo_ascender(),
+                    descent: os2.s_typo_descender(),
+                    leading: os2.s_typo_line_gap(),
+                    units_per_em,
+                    strikethrough_offset: os2.y_strikeout_position(),
+                    strikethrough_size: os2.y_strikeout_size(),
+                    underline_offset,
+                    underline_size,
+                };
+            }
+        }
+        if let Ok(hhea) = font.hhea() {
+            return Self {
+                ascent: hhea.ascender().to_i16(),
+                descent: hhea.descender().to_i16(),
+                leading: hhea.line_gap().to_i16(),
+                units_per_em,
+                strikethrough_offset: i16::default(),
+                strikethrough_size: i16::default(),
+                underline_offset,
+                underline_size,
+            };
+        }
+
+        // TODO: Handle better or use some default values?
+        panic!("Font has no metrics");
     }
 }
