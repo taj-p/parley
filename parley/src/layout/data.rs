@@ -409,7 +409,7 @@ impl<B: Brush> LayoutData<B> {
     }
     /// Push data for a new run using HarfBuzz-shaped glyph data.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn push_run_from_harfrust(
+    pub(crate) fn push_run(
         &mut self,
         font: Font,
         font_size: f32,

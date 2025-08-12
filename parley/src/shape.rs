@@ -268,7 +268,6 @@ fn shape_item<'a, B: Brush>(
     let mut current_font = font_selector.select_font(&mut cluster);
 
     // Main segmentation loop (based on swash shape_clusters) - only within current item
-    // TODO: Replace with ICU4X
     while let Some(font) = current_font.take() {
         // Collect all clusters for this font segment
         let mut segment_clusters = vec![cluster.clone()];
@@ -333,7 +332,8 @@ fn shape_item<'a, B: Brush>(
 
         // Use the entire segment text including newlines
         for (i, ch) in segment_text.chars().enumerate() {
-            // Ensure that each cluster's index matches the index into `infos`.
+            // Ensure that each cluster's index matches the index into `infos`. This is required
+            // for efficient cluster lookup within `data.rs`.
             buffer.add(ch, i as u32);
         }
 
@@ -364,7 +364,7 @@ fn shape_item<'a, B: Brush>(
             &item_infos[segment_char_start..(segment_char_start + segment_char_count)];
 
         // Push harfrust-shaped run for the entire segment
-        layout.data.push_run_from_harfrust(
+        layout.data.push_run(
             Font::new(font.font.blob.clone(), font.font.index),
             item.size,
             synthesis_to_harf_simple(font.synthesis),
