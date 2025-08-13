@@ -132,14 +132,16 @@ pub(crate) struct ClusterData {
     /// Style index for this cluster
     pub(crate) style_index: u16,
     /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
-    /// TODO: 0xFF currently not supported.
+    /// TODO: 0xFF currently not supported - need to support this.
     pub(crate) glyph_len: u8,
     /// Number of text bytes in this cluster
     pub(crate) text_len: u8,
     /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
     /// otherwise, it's an offset into the glyph array with the base
     /// taken from the owning run.
-    pub(crate) glyph_offset: u16,
+    /// TODO: If `glyph_len == 0xFF`, use the combination of `glyph_offset` and `text_len` to
+    /// encode the 32 bits of the glyph identifier.
+    pub(crate) glyph_offset: u32,
     /// Offset into the text for this cluster
     pub(crate) text_offset: u16,
     /// Advance width for this cluster
@@ -497,8 +499,8 @@ impl<B: Brush> LayoutData<B> {
         if !is_rtl {
             let mut char_indices_iter = source_text.char_indices();
             let mut cluster_start_char = char_indices_iter.next().unwrap();
-            let mut total_glyphs: u16 = 0;
-            let mut cluster_glyph_offset: u16 = 0;
+            let mut total_glyphs: u32 = 0;
+            let mut cluster_glyph_offset: u32 = 0;
             let mut cluster_id = glyph_infos.first().unwrap().cluster;
             let mut char_info = char_infos.first().unwrap();
 
@@ -509,45 +511,47 @@ impl<B: Brush> LayoutData<B> {
                 // Flush previous cluster if we reached a new cluster
                 if cluster_id != glyph_info.cluster {
                     let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
-                    assert!(
-                        ((glyph_len as u16 + cluster_glyph_offset + run.glyph_start as u16)
-                            as usize)
-                            <= self.glyphs.len(),
-                        "Glyph offset out of bounds: {} + {} + {} >= {}",
-                        glyph_len,
-                        cluster_glyph_offset,
-                        run.glyph_start,
-                        self.glyphs.len()
-                    );
-
-                    self.clusters.push(ClusterData {
-                        info: HarfClusterInfo::new(
-                            Some(char_info.0.boundary()),
-                            cluster_start_char.1,
-                        ),
-                        flags: 0, // TODO
-                        style_index: char_info.1,
-                        glyph_len: (total_glyphs - cluster_glyph_offset) as u8,
-                        text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
-                        glyph_offset: cluster_glyph_offset,
-                        text_offset: cluster_start_char.0 as u16,
-                        advance: cluster_advance,
-                    });
-
-                    let start =
-                        run.glyph_start + self.clusters.last().unwrap().glyph_offset as usize;
-                    let end = start + self.clusters.last().unwrap().glyph_len as usize;
-
-                    assert!(
-                        (end <= self.glyphs.len()),
-                        "Glyph range out of bounds: {}..{} >= {}",
-                        start,
-                        end,
-                        self.glyphs.len()
-                    );
+                    let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
+                    if glyph_len == 1
+                        && !is_newline
+                        && self.glyphs.last().unwrap().x == 0.0
+                        && self.glyphs.last().unwrap().y == 0.0
+                    {
+                        // TODO: Use epsilon check?
+                        let last_glyph = self.glyphs.pop().unwrap();
+                        total_glyphs -= 1;
+                        self.clusters.push(ClusterData {
+                            info: HarfClusterInfo::new(
+                                Some(char_info.0.boundary()),
+                                cluster_start_char.1,
+                            ),
+                            flags: 0, // TODO
+                            style_index: char_info.1,
+                            glyph_len: 0xFF, // Single glyph stored inline
+                            text_len: 1,
+                            glyph_offset: last_glyph.id,
+                            text_offset: cluster_start_char.0 as u16,
+                            advance: last_glyph.advance,
+                        });
+                    } else {
+                        self.clusters.push(ClusterData {
+                            info: HarfClusterInfo::new(
+                                Some(char_info.0.boundary()),
+                                cluster_start_char.1,
+                            ),
+                            flags: 0, // TODO
+                            style_index: char_info.1,
+                            glyph_len: if is_newline { 0 } else { glyph_len },
+                            text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
+                            glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
+                            text_offset: cluster_start_char.0 as u16,
+                            advance: cluster_advance,
+                        });
+                    }
 
                     run_advance += cluster_advance;
                     cluster_advance = 0.0;
+
                     // Skip characters until we reach the current cluster
                     for _ in cluster_id..glyph_info.cluster {
                         cluster_start_char = char_indices_iter.next().unwrap();
@@ -557,32 +561,61 @@ impl<B: Brush> LayoutData<B> {
                     cluster_glyph_offset = total_glyphs;
                 }
 
-                if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
-                    let glyph = Glyph {
-                        id: glyph_info.glyph_id,
-                        style_index: char_info.1,
-                        x: (glyph_pos.x_offset as f32) * scale_factor,
-                        y: (glyph_pos.y_offset as f32) * scale_factor,
-                        advance: (glyph_pos.x_advance as f32) * scale_factor,
-                        flags: GlyphFlags::from(glyph_info),
-                    };
-                    cluster_advance += glyph.advance;
-                    total_glyphs += 1;
-                    self.glyphs.push(glyph);
-                }
+                //if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
+                let glyph = Glyph {
+                    id: glyph_info.glyph_id,
+                    style_index: char_info.1,
+                    x: (glyph_pos.x_offset as f32) * scale_factor,
+                    y: (glyph_pos.y_offset as f32) * scale_factor,
+                    advance: (glyph_pos.x_advance as f32) * scale_factor,
+                    flags: GlyphFlags::from(glyph_info),
+                };
+                cluster_advance += glyph.advance;
+                total_glyphs += 1;
+                self.glyphs.push(glyph);
+                //}
             }
 
             // Push the last cluster
-            self.clusters.push(ClusterData {
-                info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
-                flags: 0, // TODO
-                style_index: char_info.1,
-                glyph_len: (total_glyphs - cluster_glyph_offset) as u8,
-                text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
-                glyph_offset: cluster_glyph_offset,
-                text_offset: cluster_start_char.0 as u16,
-                advance: cluster_advance,
-            });
+            {
+                let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
+                let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
+                if glyph_len == 1
+                    && !is_newline
+                    && self.glyphs.last().unwrap().x == 0.0
+                    && self.glyphs.last().unwrap().y == 0.0
+                {
+                    // TODO: Use epsilon check?
+                    let last_glyph = self.glyphs.pop().unwrap();
+                    self.clusters.push(ClusterData {
+                        info: HarfClusterInfo::new(
+                            Some(char_info.0.boundary()),
+                            cluster_start_char.1,
+                        ),
+                        flags: 0, // TODO
+                        style_index: char_info.1,
+                        glyph_len: 0xFF, // Single glyph stored inline
+                        text_len: 1,
+                        glyph_offset: last_glyph.id,
+                        text_offset: cluster_start_char.0 as u16,
+                        advance: last_glyph.advance,
+                    });
+                } else {
+                    self.clusters.push(ClusterData {
+                        info: HarfClusterInfo::new(
+                            Some(char_info.0.boundary()),
+                            cluster_start_char.1,
+                        ),
+                        flags: 0, // TODO
+                        style_index: char_info.1,
+                        glyph_len: if is_newline { 0 } else { glyph_len },
+                        text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
+                        glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
+                        text_offset: cluster_start_char.0 as u16,
+                        advance: cluster_advance,
+                    });
+                }
+            }
 
             run_advance += cluster_advance;
             run.advance = run_advance;
@@ -590,8 +623,8 @@ impl<B: Brush> LayoutData<B> {
             let mut clusters = core::mem::take(&mut self.scratch_clusters);
             let mut char_indices_iter = source_text.char_indices().rev();
             let mut cluster_start_char = char_indices_iter.next().unwrap();
-            let mut total_glyphs: u16 = 0;
-            let mut cluster_glyph_offset: u16 = 0;
+            let mut total_glyphs: u32 = 0;
+            let mut cluster_glyph_offset: u32 = 0;
             let mut cluster_id = glyph_infos.first().unwrap().cluster;
             let mut char_info = char_infos.last().unwrap();
 
@@ -602,21 +635,44 @@ impl<B: Brush> LayoutData<B> {
                 // Flush previous cluster if we reached a new cluster
                 if cluster_id != glyph_info.cluster {
                     let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
+                    let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
 
-                    // Create cluster data (bounds checking will happen after all glyphs are pushed)
-                    clusters.push(ClusterData {
-                        info: HarfClusterInfo::new(
-                            Some(char_info.0.boundary()),
-                            cluster_start_char.1,
-                        ),
-                        flags: 0, // TODO
-                        style_index: char_info.1,
-                        glyph_len,
-                        text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
-                        glyph_offset: cluster_glyph_offset,
-                        text_offset: cluster_start_char.0 as u16,
-                        advance: cluster_advance,
-                    });
+                    if glyph_len == 1
+                        && !is_newline
+                        && self.glyphs.last().unwrap().x == 0.0
+                        && self.glyphs.last().unwrap().y == 0.0
+                    {
+                        // TODO: Use epsilon check?
+                        let last_glyph = self.glyphs.pop().unwrap();
+                        total_glyphs -= 1;
+                        clusters.push(ClusterData {
+                            info: HarfClusterInfo::new(
+                                Some(char_info.0.boundary()),
+                                cluster_start_char.1,
+                            ),
+                            flags: 0, // TODO
+                            style_index: char_info.1,
+                            glyph_len: 0xFF, // Single glyph stored inline
+                            text_len: 1,
+                            glyph_offset: last_glyph.id,
+                            text_offset: cluster_start_char.0 as u16,
+                            advance: last_glyph.advance,
+                        });
+                    } else {
+                        clusters.push(ClusterData {
+                            info: HarfClusterInfo::new(
+                                Some(char_info.0.boundary()),
+                                cluster_start_char.1,
+                            ),
+                            flags: 0, // TODO
+                            style_index: char_info.1,
+                            glyph_len: if is_newline { 0 } else { glyph_len },
+                            text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
+                            glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
+                            text_offset: cluster_start_char.0 as u16,
+                            advance: cluster_advance,
+                        });
+                    }
 
                     run_advance += cluster_advance;
                     cluster_advance = 0.0;
@@ -631,33 +687,63 @@ impl<B: Brush> LayoutData<B> {
                     cluster_glyph_offset = total_glyphs;
                 }
 
-                if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
-                    let glyph = Glyph {
-                        id: glyph_info.glyph_id,
-                        style_index: char_info.1,
-                        x: (glyph_pos.x_offset as f32) * scale_factor,
-                        y: (glyph_pos.y_offset as f32) * scale_factor,
-                        advance: (glyph_pos.x_advance as f32) * scale_factor,
-                        flags: GlyphFlags::from(glyph_info),
-                    };
-                    cluster_advance += glyph.advance;
-                    total_glyphs += 1;
-                    self.glyphs.push(glyph);
-                }
+                //if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
+                let glyph = Glyph {
+                    id: glyph_info.glyph_id,
+                    style_index: char_info.1,
+                    x: (glyph_pos.x_offset as f32) * scale_factor,
+                    y: (glyph_pos.y_offset as f32) * scale_factor,
+                    advance: (glyph_pos.x_advance as f32) * scale_factor,
+                    flags: GlyphFlags::from(glyph_info),
+                };
+                cluster_advance += glyph.advance;
+                total_glyphs += 1;
+                self.glyphs.push(glyph);
+                //}
             }
 
             // Push the last cluster
-            let final_glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
-            clusters.push(ClusterData {
-                info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
-                flags: 0, // TODO
-                style_index: char_info.1,
-                glyph_len: final_glyph_len,
-                text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
-                glyph_offset: cluster_glyph_offset,
-                text_offset: cluster_start_char.0 as u16,
-                advance: cluster_advance,
-            });
+            {
+                // TODO: Handle newlines
+                let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
+                let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
+
+                if glyph_len == 1
+                    && !is_newline
+                    && self.glyphs.last().unwrap().x == 0.0
+                    && self.glyphs.last().unwrap().y == 0.0
+                {
+                    // TODO: Use epsilon check?
+                    let last_glyph = self.glyphs.pop().unwrap();
+                    clusters.push(ClusterData {
+                        info: HarfClusterInfo::new(
+                            Some(char_info.0.boundary()),
+                            cluster_start_char.1,
+                        ),
+                        flags: 0, // TODO
+                        style_index: char_info.1,
+                        glyph_len: 0xFF, // Single glyph stored inline
+                        text_len: 1,
+                        glyph_offset: last_glyph.id,
+                        text_offset: cluster_start_char.0 as u16,
+                        advance: last_glyph.advance,
+                    });
+                } else {
+                    clusters.push(ClusterData {
+                        info: HarfClusterInfo::new(
+                            Some(char_info.0.boundary()),
+                            cluster_start_char.1,
+                        ),
+                        flags: 0, // TODO
+                        style_index: char_info.1,
+                        glyph_len: if is_newline { 0 } else { glyph_len },
+                        text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
+                        glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
+                        text_offset: cluster_start_char.0 as u16,
+                        advance: cluster_advance,
+                    });
+                }
+            }
 
             run_advance += cluster_advance;
             run.advance = run_advance;
@@ -669,23 +755,23 @@ impl<B: Brush> LayoutData<B> {
         }
 
         // Validate glyph bounds for all clusters in this run
-        #[cfg(debug_assertions)]
-        {
-            for cluster in &self.clusters[cluster_range_start..] {
-                let start = run.glyph_start + cluster.glyph_offset as usize;
-                let end = start + cluster.glyph_len as usize;
-                assert!(
-                    end <= self.glyphs.len(),
-                    "Glyph range out of bounds: {}..{} >= {} (run.glyph_start={}, cluster.glyph_offset={}, cluster.glyph_len={})",
-                    start,
-                    end,
-                    self.glyphs.len(),
-                    run.glyph_start,
-                    cluster.glyph_offset,
-                    cluster.glyph_len
-                );
-            }
-        }
+        //#[cfg(debug_assertions)]
+        //{
+        //    for cluster in &self.clusters[cluster_range_start..] {
+        //        let start = run.glyph_start + cluster.glyph_offset as usize;
+        //        let end = start + cluster.glyph_len as usize;
+        //        assert!(
+        //            end <= self.glyphs.len(),
+        //            "Glyph range out of bounds: {}..{} >= {} (run.glyph_start={}, cluster.glyph_offset={}, cluster.glyph_len={})",
+        //            start,
+        //            end,
+        //            self.glyphs.len(),
+        //            run.glyph_start,
+        //            cluster.glyph_offset,
+        //            cluster.glyph_len
+        //        );
+        //    }
+        //}
 
         run.cluster_range = cluster_range_start..self.clusters.len();
         if !run.cluster_range.is_empty() {

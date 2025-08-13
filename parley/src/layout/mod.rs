@@ -275,6 +275,7 @@ pub struct Glyph {
     /// Horizontal advance to the next glyph position
     pub advance: f32,
     /// Glyph flags from harfrust shaping (e.g., unsafe_to_break, etc.)
+    /// TODO: Remove since it's available via swash.
     pub flags: GlyphFlags,
 }
 
