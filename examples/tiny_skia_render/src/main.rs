@@ -14,15 +14,15 @@
 )]
 
 use parley::{
+    AlignmentOptions, FontContext, GlyphRun, InlineBox, Layout, LayoutContext, LineHeight,
     layout::{Alignment, PositionedLayoutItem},
     style::{FontWeight, GenericFamily, StyleProperty},
-    AlignmentOptions, FontContext, GlyphRun, InlineBox, Layout, LayoutContext, LineHeight,
 };
 use skrifa::{
-    instance::{LocationRef, NormalizedCoord, Size}, 
+    GlyphId, MetadataProvider, OutlineGlyph,
+    instance::{LocationRef, NormalizedCoord, Size},
     outline::{DrawSettings, OutlinePen},
     raw::FontRef as ReadFontsRef,
-    GlyphId, MetadataProvider, OutlineGlyph,
 };
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapMut, Rect, Transform};
 
@@ -44,7 +44,6 @@ fn main() {
     let text = String::from(
         "Some text here. Let's make it a bit longer so that line wrapping kicks in 😊. And also some اللغة العربية arabic text.\nThis is underline and strikethrough text",
     );
-
 
     // The display scale for HiDPI rendering
     let display_scale = 1.0;
@@ -86,7 +85,7 @@ fn main() {
     builder.push_default(StyleProperty::FontSize(16.0));
 
     // Set the first 4 characters to bold
-    let bold = FontWeight::new(600.0);  // Use same value as old working commit
+    let bold = FontWeight::new(600.0); // Use same value as old working commit
     builder.push(StyleProperty::FontWeight(bold), 0..4);
 
     // Set the underline & strikethrough style
@@ -121,19 +120,19 @@ fn main() {
     let mut pen = TinySkiaPen::new(img.as_mut());
 
     // Render each glyph run
-       for line in layout.lines() {
-       for item in line.items() {
-           match item {
-               PositionedLayoutItem::GlyphRun(glyph_run) => {
-                   render_glyph_run(&glyph_run, &mut pen, padding);
-               }
-               PositionedLayoutItem::InlineBox(inline_box) => {
-                   pen.set_origin(inline_box.x + padding as f32, inline_box.y + padding as f32);
-                   pen.set_color(foreground_color);
-                   pen.fill_rect(inline_box.width, inline_box.height);
-               }
-           }
-       }
+    for line in layout.lines() {
+        for item in line.items() {
+            match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => {
+                    render_glyph_run(&glyph_run, &mut pen, padding);
+                }
+                PositionedLayoutItem::InlineBox(inline_box) => {
+                    pen.set_origin(inline_box.x + padding as f32, inline_box.y + padding as f32);
+                    pen.set_color(foreground_color);
+                    pen.fill_rect(inline_box.width, inline_box.height);
+                }
+            }
+        }
     }
 
     // Write image to PNG file in examples/_output dir
@@ -146,7 +145,7 @@ fn main() {
         path
     };
     img.save_png(output_path).unwrap();
-    
+
     // Debug: Dump layout data for analysis
     dump_layout_data(&layout, "Fixed Harfrust layout");
 }
@@ -157,27 +156,34 @@ fn dump_layout_data<B: parley::style::Brush>(layout: &parley::Layout<B>, label: 
     println!("Total width: {:.2}", layout.width());
     println!("Total height: {:.2}", layout.height());
     println!("Number of lines: {}", layout.lines().count());
-    
+
     for (line_index, line) in layout.lines().enumerate() {
         println!("\nLine {}: {:?}", line_index, line.text_range());
-        println!("  Line metrics: ascent={:.2}, descent={:.2}, leading={:.2}", 
-                line.metrics().ascent, line.metrics().descent, line.metrics().leading);
-        
+        println!(
+            "  Line metrics: ascent={:.2}, descent={:.2}, leading={:.2}",
+            line.metrics().ascent,
+            line.metrics().descent,
+            line.metrics().leading
+        );
+
         for (run_index, run) in line.runs().enumerate() {
             println!("  Run {}: {:?}", run_index, run.text_range());
             println!("    Font: {:?}, size: {:.1}", run.font(), run.font_size());
             println!("    Advance: {:.2}", run.advance());
-            
+
             let mut cluster_count = 0;
             for (cluster_index, cluster) in run.clusters().enumerate() {
                 cluster_count += 1;
-                if cluster_count <= 10 { // Limit output to first 10 clusters per run
+                if cluster_count <= 10 {
+                    // Limit output to first 10 clusters per run
                     println!("    Cluster {}: {:?}", cluster_index, cluster.text_range());
                     println!("      Advance: {:.2}", cluster.advance());
-                    
+
                     for (glyph_index, glyph) in cluster.glyphs().enumerate() {
-                        println!("      Glyph {}: id={}, advance={:.2}, offset=({:.2}, {:.2})", 
-                                glyph_index, glyph.id, glyph.advance, glyph.x, glyph.y);
+                        println!(
+                            "      Glyph {}: id={}, advance={:.2}, offset=({:.2}, {:.2})",
+                            glyph_index, glyph.id, glyph.advance, glyph.x, glyph.y
+                        );
                     }
                 }
             }
@@ -189,7 +195,6 @@ fn dump_layout_data<B: parley::style::Brush>(layout: &parley::Layout<B>, label: 
 }
 
 fn render_glyph_run(glyph_run: &GlyphRun<'_, ColorBrush>, pen: &mut TinySkiaPen<'_>, padding: u32) {
-    
     // Resolve properties of the GlyphRun
     let mut run_x = glyph_run.offset();
     let run = glyph_run.run();
@@ -206,13 +211,11 @@ fn render_glyph_run(glyph_run: &GlyphRun<'_, ColorBrush>, pen: &mut TinySkiaPen<
         .iter()
         .map(|coord| NormalizedCoord::from_bits(*coord))
         .collect::<Vec<_>>();
-        
-
 
     // Get glyph outlines using Skrifa. This can be cached in production code.
     let font_collection_ref = font.data.as_ref();
     let font_ref = ReadFontsRef::from_index(font_collection_ref, font.index).unwrap();
-    
+
     let outlines = font_ref.outline_glyphs();
 
     // Iterates over the glyphs in the GlyphRun
@@ -222,7 +225,7 @@ fn render_glyph_run(glyph_run: &GlyphRun<'_, ColorBrush>, pen: &mut TinySkiaPen<
         run_x += glyph.advance;
 
         let glyph_id = GlyphId::from(glyph.id as u16); // Convert harfrust u32 to swash u16
-        
+
         if let Some(glyph_outline) = outlines.get(glyph_id) {
             pen.set_origin(glyph_x, glyph_y);
             pen.set_color(brush.color);
@@ -296,14 +299,14 @@ impl TinySkiaPen<'_> {
             .fill_rect(rect, &self.paint, Transform::identity(), None);
     }
 
-         fn draw_glyph(
-         &mut self,
-         glyph: &OutlineGlyph<'_>,
-         size: f32,
-         normalized_coords: &[NormalizedCoord],
-     ) {
+    fn draw_glyph(
+        &mut self,
+        glyph: &OutlineGlyph<'_>,
+        size: f32,
+        normalized_coords: &[NormalizedCoord],
+    ) {
         let location_ref = LocationRef::new(normalized_coords);
-                 let settings = DrawSettings::unhinted(Size::new(size), location_ref);
+        let settings = DrawSettings::unhinted(Size::new(size), location_ref);
         glyph.draw(settings, self).unwrap();
 
         let builder = core::mem::replace(&mut self.open_path, PathBuilder::new());
