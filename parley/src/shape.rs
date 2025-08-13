@@ -48,6 +48,18 @@ fn convert_swash_tag_to_harfrust(swash_tag: u32) -> harfrust::Tag {
     harfrust::Tag::from_be_bytes(swash_tag.to_be_bytes())
 }
 
+pub(crate) struct ShapeContext {
+    unicode_buffer: harfrust::UnicodeBuffer,
+}
+
+impl Default for ShapeContext {
+    fn default() -> Self {
+        Self {
+            unicode_buffer: harfrust::UnicodeBuffer::new(),
+        }
+    }
+}
+
 /// Convert swash Script enum to harfrust Script for proper text shaping.
 /// Maps Unicode script codes to their corresponding OpenType script tags.
 fn convert_script_to_harfrust(swash_script: Script) -> harfrust::Script {
@@ -93,7 +105,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     inline_boxes: &[InlineBox],
     infos: &[(CharInfo, u16)],
     levels: &[u8],
-    _scx: &mut swash::shape::ShapeContext, // Not used in harfrust approach
+    scx: &'a mut ShapeContext,
     mut text: &str,
     layout: &mut Layout<B>,
 ) {
@@ -181,6 +193,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 rcx,
                 styles,
                 &item,
+                scx,
                 text,
                 &text_range,
                 &char_range,
@@ -211,6 +224,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
             rcx,
             styles,
             &item,
+            scx,
             text,
             &text_range,
             &char_range,
@@ -233,6 +247,7 @@ fn shape_item<'a, B: Brush>(
     rcx: &'a ResolveContext,
     styles: &'a [RangedStyle<B>],
     item: &Item,
+    scx: &mut ShapeContext,
     text: &str,
     text_range: &std::ops::Range<usize>,
     char_range: &std::ops::Range<usize>,
@@ -267,6 +282,8 @@ fn shape_item<'a, B: Brush>(
     }
 
     let mut current_font = font_selector.select_font(&mut cluster);
+    // Purely exists to allow taking temporary ownership of `scx.unicode_buffer`.
+    let mut scratch_buffer = harfrust::UnicodeBuffer::new();
 
     // Main segmentation loop (based on swash shape_clusters) - only within current item
     while let Some(font) = current_font.take() {
@@ -303,12 +320,12 @@ fn shape_item<'a, B: Brush>(
         // Shape the entire segment text including newlines
         // The line breaking algorithm will handle newlines automatically
 
-        let harf_font =
+        let font_ref =
             harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
 
         // Create harfrust shaper
         // TODO: cache this upstream?
-        let shaper_data = harfrust::ShaperData::new(&harf_font);
+        let shaper_data = harfrust::ShaperData::new(&font_ref);
         let mut variations: Vec<harfrust::Variation> = vec![];
 
         // Extract variations from swash synthesis
@@ -319,17 +336,17 @@ fn shape_item<'a, B: Brush>(
             });
         }
 
-        let instance = harfrust::ShaperInstance::from_variations(&harf_font, &variations);
+        let instance = harfrust::ShaperInstance::from_variations(&font_ref, &variations);
         // TODO: Don't create a new shaper for each segment.
         let harf_shaper = shaper_data
-            .shaper(&harf_font)
+            .shaper(&font_ref)
             .instance(Some(&instance))
             .point_size(Some(item.size))
             .build();
 
         // Prepare harfrust buffer
-        // TODO: Reuse this buffer for all segments.
-        let mut buffer = harfrust::UnicodeBuffer::new();
+        let mut buffer = std::mem::replace(&mut scx.unicode_buffer, scratch_buffer);
+        buffer.clear();
 
         // Use the entire segment text including newlines
         for (i, ch) in segment_text.chars().enumerate() {
@@ -379,6 +396,9 @@ fn shape_item<'a, B: Brush>(
             (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset),
             &variations,
         );
+
+        // Replace buffer to reuse allocation in next iteration.
+        scratch_buffer = std::mem::replace(&mut scx.unicode_buffer, glyph_buffer.clear());
     }
 }
 
