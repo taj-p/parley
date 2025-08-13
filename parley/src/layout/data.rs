@@ -561,7 +561,6 @@ impl<B: Brush> LayoutData<B> {
                     cluster_glyph_offset = total_glyphs;
                 }
 
-                //if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
                 let glyph = Glyph {
                     id: glyph_info.glyph_id,
                     style_index: char_info.1,
@@ -573,7 +572,6 @@ impl<B: Brush> LayoutData<B> {
                 cluster_advance += glyph.advance;
                 total_glyphs += 1;
                 self.glyphs.push(glyph);
-                //}
             }
 
             // Push the last cluster
@@ -687,7 +685,6 @@ impl<B: Brush> LayoutData<B> {
                     cluster_glyph_offset = total_glyphs;
                 }
 
-                //if to_whitespace(cluster_start_char.1) != Whitespace::Newline {
                 let glyph = Glyph {
                     id: glyph_info.glyph_id,
                     style_index: char_info.1,
@@ -699,7 +696,6 @@ impl<B: Brush> LayoutData<B> {
                 cluster_advance += glyph.advance;
                 total_glyphs += 1;
                 self.glyphs.push(glyph);
-                //}
             }
 
             // Push the last cluster
@@ -753,25 +749,6 @@ impl<B: Brush> LayoutData<B> {
             // Return scratch cluster allocation.
             self.scratch_clusters = clusters;
         }
-
-        // Validate glyph bounds for all clusters in this run
-        //#[cfg(debug_assertions)]
-        //{
-        //    for cluster in &self.clusters[cluster_range_start..] {
-        //        let start = run.glyph_start + cluster.glyph_offset as usize;
-        //        let end = start + cluster.glyph_len as usize;
-        //        assert!(
-        //            end <= self.glyphs.len(),
-        //            "Glyph range out of bounds: {}..{} >= {} (run.glyph_start={}, cluster.glyph_offset={}, cluster.glyph_len={})",
-        //            start,
-        //            end,
-        //            self.glyphs.len(),
-        //            run.glyph_start,
-        //            cluster.glyph_offset,
-        //            cluster.glyph_len
-        //        );
-        //    }
-        //}
 
         run.cluster_range = cluster_range_start..self.clusters.len();
         if !run.cluster_range.is_empty() {
