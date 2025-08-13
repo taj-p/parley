@@ -65,6 +65,7 @@ fn convert_script_to_harfrust(swash_script: Script) -> harfrust::Script {
         Script::Katakana => harfrust::script::KATAKANA,
         Script::Devanagari => harfrust::script::DEVANAGARI,
         Script::Thai => harfrust::script::THAI,
+        Script::Hangul => harfrust::script::HANGUL,
         // For unmapped scripts, default to Latin
         _ => todo!("Unmapped script: {:?}", swash_script),
     };
