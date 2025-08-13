@@ -836,9 +836,10 @@ struct FontMetrics {
 
 impl FontMetrics {
     fn from(font: &skrifa::FontRef<'_>) -> Self {
-        // This _does not_ copy harfrust's behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60)
-        // but it's unclear to me whether we should use os2 only if the appropriate fs selection "use os2 metrics" bit is set.
+        // NOTE: This _does not_ copy harfrust's metrics behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60).
+        // Instead, we're copying swash's behaviour.
 
+        // QUESTION: Should we instead panic if we can't access the `units_per_em` in the head?
         // Default units per em for font scaling.
         //
         // This is used as a fallback when the actual font units per em cannot be determined.
@@ -850,14 +851,12 @@ impl FontMetrics {
             .map(|h| h.units_per_em())
             .unwrap_or(DEFAULT_UNITS_PER_EM);
 
-        let (underline_offset, underline_size) = if let Ok(post) = font.post() {
-            // TODO: What to do if these tables don't exist? Should we actually err?
+        let (underline_offset, underline_size) = {
+            let post = font.post().unwrap(); // TODO: Handle invalid font?
             (
                 post.underline_position().to_i16(),
                 post.underline_thickness().to_i16(),
             )
-        } else {
-            (i16::default(), i16::default())
         };
 
         let mut strikethrough_offset = 0;
@@ -894,7 +893,7 @@ impl FontMetrics {
             };
         }
 
-        // TODO: Handle better or use some default values?
-        panic!("Font has no metrics");
+        // TODO: Handle invalid font?
+        panic!("Invalid font");
     }
 }
