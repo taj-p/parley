@@ -545,7 +545,7 @@ impl<B: Brush> LayoutData<B> {
                             text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
                             glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
                             text_offset: cluster_start_char.0 as u16,
-                            advance: cluster_advance,
+                            advance: if is_newline { 0.0 } else { cluster_advance },
                         });
                     }
 
@@ -612,7 +612,7 @@ impl<B: Brush> LayoutData<B> {
                         text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
                         glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
                         text_offset: cluster_start_char.0 as u16,
-                        advance: cluster_advance,
+                        advance: if is_newline { 0.0 } else { cluster_advance },
                     });
                 }
             }
@@ -670,7 +670,7 @@ impl<B: Brush> LayoutData<B> {
                             text_len: glyph_info.cluster.abs_diff(cluster_id) as u8,
                             glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
                             text_offset: cluster_start_char.0 as u16,
-                            advance: cluster_advance,
+                            advance: if is_newline { 0.0 } else { cluster_advance },
                         });
                     }
 
@@ -740,7 +740,7 @@ impl<B: Brush> LayoutData<B> {
                         text_len: glyph_infos.last().unwrap().cluster.abs_diff(cluster_id) as u8,
                         glyph_offset: if is_newline { 0 } else { cluster_glyph_offset },
                         text_offset: cluster_start_char.0 as u16,
-                        advance: cluster_advance,
+                        advance: if is_newline { 0.0 } else { cluster_advance },
                     });
                 }
             }
