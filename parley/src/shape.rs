@@ -105,7 +105,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     inline_boxes: &[InlineBox],
     infos: &[(CharInfo, u16)],
     levels: &[u8],
-    scx: &'a mut ShapeContext,
+    scx: &mut ShapeContext,
     mut text: &str,
     layout: &mut Layout<B>,
 ) {
