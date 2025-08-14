@@ -871,6 +871,8 @@ fn push_cluster(
             advance: 0.0,
         });
     } else if matches!(cluster_type, ClusterType::LigatureStart) {
+        // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
+        // we should add a separate flag to use the cluster advance instead of glyph advance.
         clusters.push(ClusterData {
             info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
             flags: cluster_type.into(),
