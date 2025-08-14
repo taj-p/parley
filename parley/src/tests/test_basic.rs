@@ -7,8 +7,7 @@ use peniko::{
 };
 
 use crate::{
-    Alignment, AlignmentOptions, ContentWidths, FontStack, InlineBox, Layout, LineHeight,
-    StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
+    test_name, Alignment, AlignmentOptions, BreakReason, ContentWidths, FontFeature, FontSettings, FontStack, InlineBox, Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
@@ -388,6 +387,52 @@ fn inbox_content_width() {
         env.with_name("trailing_whitespace")
             .check_layout_snapshot(&layout);
     }
+}
+
+#[test]
+fn ligatures() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "fi ".repeat(104);
+    let builder = env.ranged_builder(&text);
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(Some(100.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+
+    // Check that every cluster is correctly classified as a ligature start, ligature continuation,
+    // or none.
+    for line in layout.lines() {
+        for item in line.items() {
+        assert_eq!(line.break_reason(), BreakReason::Regular);
+            if let crate::PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                assert_eq!(glyph_run.run().clusters().count(), 24);
+                let mut last_advance = 0.0;
+                glyph_run.run().clusters().enumerate().for_each(|(i,c)| {
+                    match i % 3 {
+                        0 => {
+                            assert!(c.is_ligature_start());
+                            assert_eq!(c.glyphs().count(), 1);
+                            assert_eq!(c.glyphs().next().unwrap().id, 444);
+                            assert_eq!(c.advance(), 4.4296875);
+                            assert_eq!(c.glyphs().next().unwrap().advance, 8.859375);
+                        }
+                        1 => {
+                            assert!(c.is_ligature_continuation());
+                            assert_eq!(c.advance(), last_advance);
+                            assert_eq!(c.advance(), 4.4296875);
+                            assert_eq!(c.glyphs().count(), 0);
+                        }
+                        2 => assert!(!c.is_ligature_start() && !c.is_ligature_continuation()),
+                        _ => unreachable!(),
+                    }
+                    last_advance = c.advance();
+                });
+            }
+        }
+    }
+
+    env.check_layout_snapshot(&layout);
 }
 
 #[test]

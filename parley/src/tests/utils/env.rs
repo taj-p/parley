@@ -370,6 +370,7 @@ impl TestEnv {
 
         let snapshot_path = snapshot_dir().join(&image_name);
         let comparison_path = current_imgs_dir().join(&image_name);
+        current_img.save_png(&comparison_path).unwrap();
 
         if let Err((error_msg, snapshot_img_opt)) = self.check_images(&current_img, &snapshot_path)
         {
