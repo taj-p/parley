@@ -814,7 +814,7 @@ enum ClusterType {
     Newline,
 }
 
-impl Into<u16> for ClusterType {
+impl Into<u16> for &ClusterType {
     fn into(self) -> u16 {
         match self {
             ClusterType::LigatureStart => ClusterData::LIGATURE_START,
@@ -836,41 +836,46 @@ fn push_cluster(
     cluster_type: ClusterType,
 ) -> u32 {
     let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
+    let info = HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1);
+    let style_index = char_info.1;
+    let flags = (&cluster_type).into();
+    let text_offset = cluster_start_char.0 as u16;
+    debug_assert_eq!(text_len, 1);
 
     if matches!(cluster_type, ClusterType::LigatureComponent) {
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
-            flags: cluster_type.into(),
-            style_index: char_info.1,
+            info,
+            flags,
+            style_index,
             glyph_len: 0,
             text_len,
             glyph_offset: 0,
-            text_offset: cluster_start_char.0 as u16,
+            text_offset,
             advance: cluster_advance,
         });
     } else if matches!(cluster_type, ClusterType::Newline) {
         debug_assert_eq!(glyph_len, 1);
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
-            flags: cluster_type.into(),
-            style_index: char_info.1,
+            info,
+            flags,
+            style_index,
             glyph_len: 0,
-            text_len: 1,
+            text_len,
             glyph_offset: 0,
-            text_offset: cluster_start_char.0 as u16,
+            text_offset,
             advance: 0.0,
         });
     } else if matches!(cluster_type, ClusterType::LigatureStart) {
         // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
         // we should add a separate flag to use the cluster advance instead of glyph advance.
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
-            flags: cluster_type.into(),
-            style_index: char_info.1,
+            info,
+            flags,
+            style_index,
             glyph_len,
             text_len,
             glyph_offset: cluster_glyph_offset,
-            text_offset: cluster_start_char.0 as u16,
+            text_offset,
             advance: cluster_advance,
         });
     }else if glyph_len == 1 && glyphs.last().unwrap().x == 0.0 && glyphs.last().unwrap().y == 0.0 {
@@ -878,24 +883,24 @@ fn push_cluster(
         let last_glyph = glyphs.pop().unwrap();
         total_glyphs -= 1;
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
-            flags: cluster_type.into(),
-            style_index: char_info.1,
+            info,
+            flags,
+            style_index,
             glyph_len: 0xFF,
-            text_len: 1,
+            text_len,
             glyph_offset: last_glyph.id,
-            text_offset: cluster_start_char.0 as u16,
+            text_offset,
             advance: cluster_advance,
         });
     } else {
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
-            flags: cluster_type.into(),
-            style_index: char_info.1,
+            info,
+            flags,
+            style_index,
             glyph_len,
             text_len,
             glyph_offset: cluster_glyph_offset,
-            text_offset: cluster_start_char.0 as u16,
+            text_offset,
             advance: cluster_advance,
         });
     }
