@@ -29,8 +29,6 @@ use hashbrown::{HashMap, HashSet};
 use swash::Synthesis;
 use swash::text::cluster::Boundary;
 
-// Remove swash::GlyphId - using harfrust glyph IDs instead
-
 pub use alignment::AlignmentOptions;
 pub use cluster::{Affinity, ClusterPath, ClusterSide};
 pub use cursor::{Cursor, Selection};
@@ -260,18 +258,13 @@ pub struct Cluster<'a, B: Brush> {
     data: &'a ClusterData,
 }
 
-/// Harfrust-based glyph with positioning and additional shaping information
+/// Glyph with an offset and advance.
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
 pub struct Glyph {
-    /// Harfrust glyph ID (u32)
     pub id: u32,
-    /// Style index into the layout style collection
     pub style_index: u16,
-    /// Horizontal offset from the baseline origin
     pub x: f32,
-    /// Vertical offset from the baseline origin  
     pub y: f32,
-    /// Horizontal advance to the next glyph position
     pub advance: f32,
 }
 

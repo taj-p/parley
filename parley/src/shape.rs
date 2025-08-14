@@ -549,17 +549,3 @@ impl PartialEq for SelectedFont {
         self.font.family == other.font.family && self.synthesis == other.synthesis
     }
 }
-
-impl swash::shape::partition::SelectedFont for SelectedFont {
-    fn font(&self) -> FontRef<'_> {
-        FontRef::from_index(self.font.blob.as_ref(), self.font.index as _).unwrap()
-    }
-
-    fn id_override(&self) -> Option<[u64; 2]> {
-        Some([self.font.blob.id(), self.font.index as _])
-    }
-
-    fn synthesis(&self) -> Option<Synthesis> {
-        Some(self.synthesis)
-    }
-}
