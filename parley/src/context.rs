@@ -33,7 +33,6 @@ pub struct LayoutContext<B: Brush = [u8; 4]> {
     pub(crate) tree_style_builder: TreeStyleBuilder<B>,
 
     pub(crate) info: Vec<(CharInfo, u16)>,
-
     pub(crate) scx: ShapeContext,
 }
 
