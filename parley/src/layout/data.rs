@@ -63,12 +63,12 @@ impl Default for HarfSynthesis {
 /// Simple cluster info for HarfBuzz compatibility
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct HarfClusterInfo {
-    boundary: Option<Boundary>,
+    boundary: Boundary,
     source_char: char,
 }
 
 impl HarfClusterInfo {
-    pub(crate) fn new(boundary: Option<Boundary>, source_char: char) -> Self {
+    pub(crate) fn new(boundary: Boundary, source_char: char) -> Self {
         Self {
             boundary,
             source_char,
@@ -76,7 +76,7 @@ impl HarfClusterInfo {
     }
 
     /// Get boundary type (critical for line breaking)
-    pub(crate) fn boundary(&self) -> Option<Boundary> {
+    pub(crate) fn boundary(&self) -> Boundary {
         self.boundary
     }
 
@@ -87,7 +87,7 @@ impl HarfClusterInfo {
 
     /// Check if this is a word boundary
     pub(crate) fn is_boundary(&self) -> bool {
-        self.boundary.is_some()
+        self.boundary == Boundary::None
     }
 
     /// Check if this is an emoji
@@ -113,17 +113,8 @@ fn to_whitespace(c: char) -> Whitespace {
     }
 }
 
-impl Default for HarfClusterInfo {
-    fn default() -> Self {
-        Self {
-            boundary: None,
-            source_char: ' ',
-        }
-    }
-}
-
 /// Cluster data - uses swash analysis with harfrust shaping
-#[derive(Copy, Clone, Default, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClusterData {
     /// Cluster information from swash text analysis (using our own type)
     pub(crate) info: HarfClusterInfo,
@@ -592,13 +583,13 @@ impl<B: Brush> LayoutData<B> {
                     for cluster in clusters {
                         let boundary = cluster.info.boundary();
                         let style = &self.styles[cluster.style_index as usize];
-                        if matches!(boundary, Some(Boundary::Line) | Some(Boundary::Mandatory))
+                        if matches!(boundary, Boundary::Line | Boundary::Mandatory)
                             || style.overflow_wrap == OverflowWrap::Anywhere
                         {
                             let trailing_whitespace = whitespace_advance(prev_cluster);
                             min_width = min_width.max(running_min_width - trailing_whitespace);
                             running_min_width = 0.0;
-                            if boundary == Some(Boundary::Mandatory) {
+                            if boundary == Boundary::Mandatory {
                                 running_max_width = 0.0;
                             }
                         }
@@ -848,7 +839,7 @@ fn push_cluster(
 
     if matches!(cluster_type, ClusterType::LigatureComponent) {
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
             flags: cluster_type.into(),
             style_index: char_info.1,
             glyph_len: 0,
@@ -860,7 +851,7 @@ fn push_cluster(
     } else if matches!(cluster_type, ClusterType::Newline) {
         debug_assert_eq!(glyph_len, 1);
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
             flags: cluster_type.into(),
             style_index: char_info.1,
             glyph_len: 0,
@@ -873,7 +864,7 @@ fn push_cluster(
         // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
         // we should add a separate flag to use the cluster advance instead of glyph advance.
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
             flags: cluster_type.into(),
             style_index: char_info.1,
             glyph_len,
@@ -887,7 +878,7 @@ fn push_cluster(
         let last_glyph = glyphs.pop().unwrap();
         total_glyphs -= 1;
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
             flags: cluster_type.into(),
             style_index: char_info.1,
             glyph_len: 0xFF,
@@ -898,7 +889,7 @@ fn push_cluster(
         });
     } else {
         clusters.push(ClusterData {
-            info: HarfClusterInfo::new(Some(char_info.0.boundary()), cluster_start_char.1),
+            info: HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
             flags: cluster_type.into(),
             style_index: char_info.1,
             glyph_len,
