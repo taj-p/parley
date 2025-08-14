@@ -1,8 +1,6 @@
 // Copyright 2021 the Parley Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::GlyphFlags;
-
 use super::{BreakReason, Brush, Cluster, Glyph, Layout, Line, LineItem, Range, Run, Style};
 use swash::text::cluster::Whitespace;
 
@@ -168,17 +166,14 @@ impl<'a, B: Brush> Cluster<'a, B> {
     /// Returns an iterator over the glyphs in the cluster.
     pub fn glyphs(&self) -> impl Iterator<Item = Glyph> + 'a + Clone {
         if self.data.glyph_len == 0xFF {
-            //println!("Cluster {:?} has 1 glyph", self.data);
             GlyphIter::Single(Some(Glyph {
                 id: self.data.glyph_offset,
                 style_index: self.data.style_index,
                 x: 0.,
                 y: 0.,
                 advance: self.data.advance,
-                flags: GlyphFlags::empty(),
             }))
         } else {
-            //println!("Cluster {:?} has multiple glyphs", self.data);
             let start = self.run.data.glyph_start + self.data.glyph_offset as usize;
             GlyphIter::Slice(
                 self.run.layout.data.glyphs[start..start + self.data.glyph_len as usize].iter(),

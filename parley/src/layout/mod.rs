@@ -22,7 +22,6 @@ use accesskit::{Node, NodeId, Role, TextDirection, TreeUpdate};
 use alignment::unjustify;
 #[cfg(feature = "accesskit")]
 use alloc::vec::Vec;
-use bitflags::bitflags;
 use core::{cmp::Ordering, ops::Range};
 use data::{ClusterData, LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData, RunData};
 #[cfg(feature = "accesskit")]
@@ -274,28 +273,6 @@ pub struct Glyph {
     pub y: f32,
     /// Horizontal advance to the next glyph position
     pub advance: f32,
-    /// Glyph flags from harfrust shaping (e.g., unsafe_to_break, etc.)
-    /// TODO: Remove since it's available via swash.
-    pub flags: GlyphFlags,
-}
-
-bitflags! {
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    pub struct GlyphFlags: u8 {
-        const UNSAFE_TO_BREAK = 0b00000001;
-        const UNSAFE_TO_CONCAT = 0b00000010;
-        const SAFE_TO_INSERT_TATWEEL = 0b00000100;
-    }
-}
-
-impl From<&harfrust::GlyphInfo> for GlyphFlags {
-    fn from(info: &harfrust::GlyphInfo) -> Self {
-        GlyphFlags::from_bits_truncate(
-            info.unsafe_to_break() as u8 * GlyphFlags::UNSAFE_TO_BREAK.bits()
-                | info.safe_to_insert_tatweel() as u8 * GlyphFlags::SAFE_TO_INSERT_TATWEEL.bits()
-                | info.unsafe_to_concat() as u8 * GlyphFlags::UNSAFE_TO_CONCAT.bits(),
-        )
-    }
 }
 
 impl Glyph {

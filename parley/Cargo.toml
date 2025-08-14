@@ -25,7 +25,6 @@ system = ["std", "fontique/system"]
 accesskit = ["dep:accesskit"]
 
 [dependencies]
-bitflags = { workspace = true }
 swash = { workspace = true }
 skrifa = { workspace = true }
 peniko = { workspace = true }

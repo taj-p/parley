@@ -5,7 +5,7 @@ use crate::inline_box::InlineBox;
 use crate::layout::{ContentWidths, Glyph, LineMetrics, RunMetrics, Style};
 use crate::style::Brush;
 use crate::util::nearly_zero;
-use crate::{Font, GlyphFlags, OverflowWrap};
+use crate::{Font, OverflowWrap};
 use core::ops::Range;
 
 use skrifa::raw::tables::os2::SelectionFlags;
@@ -786,7 +786,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             x: (glyph_pos.x_offset as f32) * scale_factor,
             y: (glyph_pos.y_offset as f32) * scale_factor,
             advance: (glyph_pos.x_advance as f32) * scale_factor,
-            flags: GlyphFlags::from(glyph_info),
         };
         cluster_advance += glyph.advance;
         total_glyphs += 1;
