@@ -26,7 +26,7 @@ use core::{cmp::Ordering, ops::Range};
 use data::{ClusterData, LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData, RunData};
 #[cfg(feature = "accesskit")]
 use hashbrown::{HashMap, HashSet};
-use swash::Synthesis;
+use fontique::Synthesis;
 use swash::text::cluster::Boundary;
 
 pub use alignment::AlignmentOptions;

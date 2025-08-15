@@ -12,7 +12,6 @@ use super::resolve::{RangedStyle, ResolveContext, Resolved};
 use super::style::{Brush, FontFeature, FontVariation};
 use crate::Font;
 use crate::inline_box::InlineBox;
-use crate::layout::data::HarfSynthesis;
 use crate::util::nearly_eq;
 
 // External crate imports
@@ -20,33 +19,9 @@ use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
 use swash::text::cluster::{CharCluster, CharInfo, Token};
 use swash::text::{Language, Script};
-use swash::{FontRef, Synthesis};
 
 /// Capacity hint for deferred inline boxes to avoid repeated allocations
 const DEFERRED_BOXES_CAPACITY: usize = 16;
-
-/// Convert swash synthesis information to our HarfSynthesis format.
-/// This extracts the bold and italic adjustments for use with harfrust.
-///
-/// TODO: This conversion is lossy and discards important synthesis information:
-/// - Variation settings (weight/width/slant axes) are lost
-/// - Precise skew angle is reduced to boolean (any non-zero skew becomes true)
-/// - Small caps and other synthesis options are ignored
-///
-/// For full fidelity, HarfSynthesis should be expanded to preserve all
-/// swash::Synthesis fields, or we should pass the original synthesis through
-/// and convert at render time instead of shaping time.
-fn synthesis_to_harf_simple(synthesis: Synthesis) -> HarfSynthesis {
-    HarfSynthesis {
-        bold: synthesis.embolden(),
-        italic: synthesis.skew().unwrap_or(0.0) != 0.0,
-    }
-}
-
-/// Convert a swash Tag (u32) to a harfrust Tag for OpenType feature/script handling.
-fn convert_swash_tag_to_harfrust(swash_tag: u32) -> harfrust::Tag {
-    harfrust::Tag::from_be_bytes(swash_tag.to_be_bytes())
-}
 
 pub(crate) struct ShapeContext {
     unicode_buffer: harfrust::UnicodeBuffer,
@@ -78,7 +53,6 @@ fn convert_script_to_harfrust(swash_script: Script) -> harfrust::Script {
         Script::Devanagari => harfrust::script::DEVANAGARI,
         Script::Thai => harfrust::script::THAI,
         Script::Hangul => harfrust::script::HANGUL,
-        // For unmapped scripts, default to Latin
         _ => todo!("Unmapped script: {:?}", swash_script),
     };
 
@@ -329,10 +303,10 @@ fn shape_item<'a, B: Brush>(
         let mut variations: Vec<harfrust::Variation> = vec![];
 
         // Extract variations from swash synthesis
-        for setting in font.synthesis.variations() {
+        for (tag, value) in font.font.synthesis.variation_settings() {
             variations.push(harfrust::Variation {
-                tag: convert_swash_tag_to_harfrust(setting.tag),
-                value: setting.value,
+                tag: *tag,
+                value: *value,
             });
         }
 
@@ -385,8 +359,7 @@ fn shape_item<'a, B: Brush>(
         layout.data.push_run(
             Font::new(font.font.blob.clone(), font.font.index),
             item.size,
-            synthesis_to_harf_simple(font.synthesis),
-            font.font.synthesis, // Use the original fontique synthesis from QueryFont
+            font.font.synthesis,
             &glyph_buffer,
             item.level,
             item.word_spacing,
@@ -531,21 +504,18 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
 
 struct SelectedFont {
     font: QueryFont,
-    synthesis: Synthesis,
 }
 
 impl From<&QueryFont> for SelectedFont {
     fn from(font: &QueryFont) -> Self {
-        use crate::swash_convert::synthesis_to_swash;
         Self {
             font: font.clone(),
-            synthesis: synthesis_to_swash(font.synthesis),
         }
     }
 }
 
 impl PartialEq for SelectedFont {
     fn eq(&self, other: &Self) -> bool {
-        self.font.family == other.font.family && self.synthesis == other.synthesis
+        self.font.family == other.font.family
     }
 }
