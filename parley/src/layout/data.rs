@@ -50,7 +50,7 @@ impl ClusterInfo {
 
     /// Check if this is an emoji
     pub(crate) fn is_emoji(&self) -> bool {
-        // TODO: Simple emoji detection - could be enhanced
+        // TODO: Defer to ICU4X properties (see: https://docs.rs/icu/latest/icu/properties/props/struct.Emoji.html).
         matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
     }
 
@@ -66,7 +66,7 @@ fn to_whitespace(c: char) -> Whitespace {
         '\t' => Whitespace::Tab,
         '\n' => Whitespace::Newline,
         '\r' => Whitespace::Newline,
-        '\u{00A0}' => Whitespace::NoBreakSpace, // Non-breaking space
+        '\u{00A0}' => Whitespace::NoBreakSpace,
         _ => Whitespace::None,
     }
 }
