@@ -31,20 +31,6 @@ pub(crate) fn locale_to_fontique(locale: swash::text::Language) -> Option<fontiq
     fontique::Language::try_from_bytes(&buf[..len]).ok()
 }
 
-pub(crate) fn synthesis_to_swash(synthesis: fontique::Synthesis) -> swash::Synthesis {
-    swash::Synthesis::new(
-        synthesis
-            .variation_settings()
-            .iter()
-            .map(|setting| swash::Setting {
-                tag: swash::tag_from_bytes(&setting.0.to_be_bytes()),
-                value: setting.1,
-            }),
-        synthesis.embolden(),
-        synthesis.skew().unwrap_or_default(),
-    )
-}
-
 #[rustfmt::skip]
 const SCRIPT_TAGS: [[u8; 4]; 157] = [
     *b"Adlm", *b"Aghb", *b"Ahom", *b"Arab", *b"Armi", *b"Armn", *b"Avst", *b"Bali", *b"Bamu",

@@ -19,47 +19,6 @@ use core_maths::CoreFloat;
 
 use skrifa::raw::TableProvider;
 
-/// Simple synthesis specification for HarfBuzz compatibility
-///
-/// TODO: This is a minimal implementation that covers basic font synthesis.
-/// For full compatibility with swash::Synthesis and fontique::Synthesis, we should add:
-///
-/// 1. **Variation settings**: `Vec<(Tag, f32)>` - for precise weight/width/slant adjustments
-///    instead of just boolean bold/italic. Modern variable fonts use continuous axes
-///    (e.g., weight 100-900) rather than discrete on/off switches.
-///
-/// 2. **Precise skew angle**: `Option<f32>` - the exact italic/oblique angle in degrees
-///    instead of just a boolean. Different fonts may need different skew amounts.
-///
-/// 3. **Small caps synthesis**: `bool` - for synthesizing small capitals when the font
-///    doesn't have native small caps support.
-///
-/// 4. **Advanced synthesis options**:
-///    - Condensed/expanded synthesis for width adjustments
-///    - Optical sizing hints
-///    - Any other synthesis features that HarfBuzz supports
-///
-/// The current implementation satisfies basic use cases but should be expanded when:
-/// - Variable font support becomes critical
-/// - More sophisticated font matching is needed  
-/// - Full swash feature parity is required
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct HarfSynthesis {
-    /// Fake bold by emboldening glyphs
-    pub bold: bool,
-    /// Fake italic by skewing glyphs  
-    pub italic: bool,
-}
-
-impl Default for HarfSynthesis {
-    fn default() -> Self {
-        Self {
-            bold: false,
-            italic: false,
-        }
-    }
-}
-
 /// Simple cluster info for HarfBuzz compatibility
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct HarfClusterInfo {
