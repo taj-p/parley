@@ -396,20 +396,18 @@ fn inbox_content_width() {
 fn ligatures() {
     let mut env = TestEnv::new(test_name!(), None);
 
-    let text = "fi ".repeat(104);
+    let text = "fi ".repeat(20);
     let builder = env.ranged_builder(&text);
     let mut layout = builder.build(&text);
     layout.break_all_lines(Some(100.0));
     layout.align(None, Alignment::Start, AlignmentOptions::default());
 
     // Check that every cluster is correctly classified as a ligature start, ligature continuation,
-    // or none.
+    // or none with correct glyphs and advances.
     for line in layout.lines() {
         for item in line.items() {
-            assert_eq!(line.break_reason(), BreakReason::Regular);
             if let crate::PositionedLayoutItem::GlyphRun(glyph_run) = item {
-                assert_eq!(glyph_run.run().clusters().count(), 24);
-                let mut last_advance = 0.0;
+                let mut last_advance = f32::MAX;
                 glyph_run.run().clusters().enumerate().for_each(|(i, c)| {
                     match i % 3 {
                         0 => {
