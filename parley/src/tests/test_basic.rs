@@ -9,8 +9,8 @@ use peniko::{
 };
 
 use crate::{
-    Alignment, AlignmentOptions, BreakReason, ContentWidths, FontFeature, FontSettings, FontStack,
-    InlineBox, Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
+    Alignment, AlignmentOptions, ContentWidths, FontSettings, FontStack, InlineBox, Layout,
+    LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
