@@ -19,14 +19,13 @@ use core_maths::CoreFloat;
 
 use skrifa::raw::TableProvider;
 
-/// Simple cluster info for HarfBuzz compatibility
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct HarfClusterInfo {
+pub(crate) struct ClusterInfo {
     boundary: Boundary,
     source_char: char,
 }
 
-impl HarfClusterInfo {
+impl ClusterInfo {
     pub(crate) fn new(boundary: Boundary, source_char: char) -> Self {
         Self {
             boundary,
@@ -76,7 +75,7 @@ fn to_whitespace(c: char) -> Whitespace {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClusterData {
     /// Cluster information from swash text analysis (using our own type)
-    pub(crate) info: HarfClusterInfo,
+    pub(crate) info: ClusterInfo,
     /// Cluster flags (ligature info, style divergence, etc.)
     pub(crate) flags: u16,
     /// Style index for this cluster
@@ -841,7 +840,7 @@ fn push_cluster(
     cluster_type: ClusterType,
 ) -> u32 {
     let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
-    let info = HarfClusterInfo::new(char_info.0.boundary(), cluster_start_char.1);
+    let info = ClusterInfo::new(char_info.0.boundary(), cluster_start_char.1);
     let style_index = char_info.1;
     let flags = (&cluster_type).into();
     let text_offset = cluster_start_char.0 as u16;

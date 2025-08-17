@@ -388,7 +388,7 @@ impl<'a, B: Brush> Cluster<'a, B> {
         Some(offset)
     }
 
-    pub(crate) fn info(&self) -> &data::HarfClusterInfo {
+    pub(crate) fn info(&self) -> &data::ClusterInfo {
         &self.data.info
     }
 }
