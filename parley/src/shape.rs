@@ -300,9 +300,9 @@ fn shape_item<'a, B: Brush>(
         // Create harfrust shaper
         // TODO: cache this upstream?
         let shaper_data = harfrust::ShaperData::new(&font_ref);
+        // TODO: Use item variations
         let mut variations: Vec<harfrust::Variation> = vec![];
-
-        // Extract variations from swash synthesis
+        // Extract variations from synthesis
         for (tag, value) in font.font.synthesis.variation_settings() {
             variations.push(harfrust::Variation {
                 tag: *tag,
@@ -346,7 +346,17 @@ fn shape_item<'a, B: Brush>(
             }
         }
 
-        let glyph_buffer = harf_shaper.shape(buffer, &[]);
+        let mut features: Vec<harfrust::Feature> = vec![];
+        for feature in rcx.features(item.features).unwrap_or(&[]) {
+            features.push(harfrust::Feature {
+                tag: harfrust::Tag::from_u32(feature.tag),
+                value: feature.value as u32,
+                start: 0,
+                end: buffer.len() as u32,
+            });
+        }
+
+        let glyph_buffer = harf_shaper.shape(buffer, &features);
 
         // Extract relevant CharInfo slice for this segment
         let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
@@ -508,9 +518,7 @@ struct SelectedFont {
 
 impl From<&QueryFont> for SelectedFont {
     fn from(font: &QueryFont) -> Self {
-        Self {
-            font: font.clone(),
-        }
+        Self { font: font.clone() }
     }
 }
 

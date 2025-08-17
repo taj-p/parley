@@ -1,6 +1,8 @@
 // Copyright 2024 the Parley Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+use std::borrow::Cow;
+
 use peniko::{
     color::{AlphaColor, Srgb, palette},
     kurbo::Size,
@@ -415,14 +417,15 @@ fn ligatures() {
                             assert_eq!(c.glyphs().count(), 1);
                             assert_eq!(c.text_range().len(), 1);
                             assert_eq!(c.glyphs().next().unwrap().id, 444);
-                            assert_eq!(c.advance(), 4.4296875);
-                            assert_eq!(c.glyphs().next().unwrap().advance, 8.859375);
+                            // The glyph for this ligature lives in the start cluster and should
+                            // contain the whole ligature's advance.
+                            assert_eq!(c.glyphs().next().unwrap().advance, c.advance() * 2.0);
                         }
                         1 => {
                             assert!(c.is_ligature_continuation());
+                            // A continuation shares its advance with the previous cluster.
                             assert_eq!(c.advance(), last_advance);
                             assert_eq!(c.text_range().len(), 1);
-                            assert_eq!(c.advance(), 4.4296875);
                             assert_eq!(c.glyphs().count(), 0);
                         }
                         2 => assert!(!c.is_ligature_start() && !c.is_ligature_continuation()),
@@ -433,6 +436,44 @@ fn ligatures() {
             }
         }
     }
+
+    env.check_layout_snapshot(&layout);
+}
+
+#[test]
+fn font_features_liga_on() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "fi ".repeat(4);
+    let mut builder = env.ranged_builder(&text);
+    builder.push_default(StyleProperty::FontFeatures(FontSettings::List(
+        Cow::Borrowed(&[swash::Setting {
+            tag: swash::tag_from_bytes(b"liga"),
+            value: 1,
+        }]),
+    )));
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(Some(100.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+    env.check_layout_snapshot(&layout);
+}
+
+#[test]
+fn font_features_liga_off() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "fi ".repeat(4);
+    let mut builder = env.ranged_builder(&text);
+    builder.push_default(StyleProperty::FontFeatures(FontSettings::List(
+        Cow::Borrowed(&[swash::Setting {
+            tag: swash::tag_from_bytes(b"liga"),
+            value: 0,
+        }]),
+    )));
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(Some(100.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
 
     env.check_layout_snapshot(&layout);
 }

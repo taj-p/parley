@@ -739,7 +739,9 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         println!("Processing final cluster: {:?}", cluster_start_char);
         println!(
             "Remaining characters: {}, cluster_id: {}, char_infos.len(): {}",
-            remaining_chars, cluster_id, char_infos.len()
+            remaining_chars,
+            cluster_id,
+            char_infos.len()
         );
 
         let has_remaining_chars = char_indices_iter.peek().is_some();
