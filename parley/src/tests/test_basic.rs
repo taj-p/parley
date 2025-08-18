@@ -475,12 +475,12 @@ fn variable_fonts() {
         builder.push_default(StyleProperty::FontStack(FontStack::Single(
             FontFamily::Named(Cow::Borrowed(&"Arimo")),
         )));
-        builder.push_default(
-            StyleProperty::FontVariations(FontSettings::List(Cow::Borrowed(&[swash::Setting {
+        builder.push_default(StyleProperty::FontVariations(FontSettings::List(
+            Cow::Borrowed(&[swash::Setting {
                 tag: swash::tag_from_bytes(b"wght"),
                 value: wght,
-            }]))),
-        );
+            }]),
+        )));
         let mut layout = builder.build(&text);
         layout.break_all_lines(Some(100.0));
         layout.align(None, Alignment::Start, AlignmentOptions::default());
