@@ -395,7 +395,8 @@ impl<B: Brush> LayoutData<B> {
                 leading: font_size * metrics.leading as f32 / units_per_em,
                 underline_offset: font_size * metrics.underline_offset as f32 / units_per_em,
                 underline_size: font_size * metrics.underline_size as f32 / units_per_em,
-                strikethrough_offset: font_size * metrics.strikethrough_offset as f32 / units_per_em,
+                strikethrough_offset: font_size * metrics.strikethrough_offset as f32
+                    / units_per_em,
                 strikethrough_size: font_size * metrics.strikethrough_size as f32 / units_per_em,
             }
         };
@@ -637,6 +638,9 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
 
     let mut run_advance = 0.0;
     let mut cluster_advance = 0.0;
+    // If the current cluster might be a single-glyph, zero-offset cluster, we defer
+    // pushing the first glyph so we can inline it directly without a push+pop.
+    let mut pending_inline_glyph: Option<Glyph> = None;
 
     for (glyph_info, glyph_pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
         // Flush previous cluster if we've reached a new cluster
@@ -645,23 +649,34 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             run_advance += cluster_advance;
             cluster_advance /= num_components as f32;
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-            total_glyphs = push_cluster(
+            // Determine cluster type for the completed cluster.
+            let cluster_type = if num_components > 1 {
+                ClusterType::LigatureStart
+            } else if is_newline {
+                ClusterType::Newline
+            } else {
+                ClusterType::Regular
+            };
+
+            let inline_glyph_id = if matches!(cluster_type, ClusterType::Regular) {
+                pending_inline_glyph.take().map(|g| g.id)
+            } else {
+                if let Some(pending) = pending_inline_glyph.take() {
+                    glyphs.push(pending);
+                    total_glyphs += 1;
+                }
+                None
+            };
+
+            push_cluster(
                 clusters,
-                glyphs,
                 char_info,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
                 total_glyphs,
-                if num_components > 1 {
-                    ClusterType::LigatureStart
-                } else {
-                    if is_newline {
-                        ClusterType::Newline
-                    } else {
-                        ClusterType::Regular
-                    }
-                },
+                cluster_type,
+                inline_glyph_id,
             );
 
             if num_components > 1 {
@@ -681,13 +696,13 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
 
                     push_cluster(
                         clusters,
-                        glyphs,
                         char_info_,
                         cluster_start_char,
                         cluster_glyph_offset,
                         cluster_advance,
                         total_glyphs,
                         ClusterType::LigatureComponent,
+                        None,
                     );
                 }
             }
@@ -697,6 +712,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             cluster_id = glyph_info.cluster;
             char_info = &char_infos[cluster_id as usize];
             cluster_glyph_offset = total_glyphs;
+            pending_inline_glyph = None;
         }
 
         let glyph = Glyph {
@@ -707,42 +723,42 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             advance: (glyph_pos.x_advance as f32) * scale_factor,
         };
         cluster_advance += glyph.advance;
-        total_glyphs += 1;
-        // TODO: Is there a way to prevent the push here if we know it's a single glyph cluster?
-        glyphs.push(glyph);
+        // Push any pending glyph. If it was a zero-offset, single glyph cluster, it would
+        // have been pushed in the first `if` block.
+        if let Some(pending) = pending_inline_glyph.take() {
+            glyphs.push(pending);
+            total_glyphs += 1;
+        }
+        if total_glyphs == cluster_glyph_offset && glyph.x == 0.0 && glyph.y == 0.0 {
+            // Defer this potential zero-offset, single glyph cluster
+            pending_inline_glyph = Some(glyph);
+        } else {
+            glyphs.push(glyph);
+            total_glyphs += 1;
+        }
     }
 
     // Push the last cluster
     {
         // Since this is the last cluster, it covers from cluster_id to the end of char_infos
-        // TODO: THIS IS INCORRECT!
-        let remaining_chars = char_infos.len() - cluster_id as usize;
-        let mut char_indices_iter = char_indices_iter.peekable();
+        let remaining_chars = char_infos.len() - cluster_id.abs_diff(start_cluster_id) as usize;
+        if remaining_chars > 1 {
+            // This is a ligature - create ligature start + ligature components
 
-        println!("Processing final cluster: {:?}", cluster_start_char);
-        println!(
-            "Remaining characters: {}, cluster_id: {}, char_infos.len(): {}",
-            remaining_chars,
-            cluster_id,
-            char_infos.len()
-        );
-
-        let has_remaining_chars = char_indices_iter.peek().is_some();
-
-        if has_remaining_chars {
-            // This is a ligature - create ligature start + components
+            if let Some(pending) = pending_inline_glyph.take() {
+                glyphs.push(pending);
+                total_glyphs += 1;
+            }
             let ligature_advance = cluster_advance / remaining_chars as f32;
-
-            // Create ligature start cluster (covers only the first character)
-            total_glyphs = push_cluster(
+            push_cluster(
                 clusters,
-                glyphs,
                 char_info,
                 cluster_start_char,
                 cluster_glyph_offset,
                 ligature_advance,
                 total_glyphs,
                 ClusterType::LigatureStart,
+                None,
             );
 
             // Create ligature component clusters for the remaining characters
@@ -751,6 +767,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 if to_whitespace(char.1) == Whitespace::Space {
                     break;
                 }
+                // Iterate in correct (LTR or RTL) order
                 let component_char_info = if cluster_start_char.0 < char.0 {
                     &char_infos[(cluster_id + i) as usize]
                 } else {
@@ -759,32 +776,48 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
 
                 push_cluster(
                     clusters,
-                    glyphs,
                     component_char_info,
                     char,
                     cluster_glyph_offset,
                     ligature_advance,
                     total_glyphs,
                     ClusterType::LigatureComponent,
+                    None,
                 );
                 i += 1;
             }
         } else {
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-            // Regular single-character cluster
+            let cluster_type = if is_newline {
+                ClusterType::Newline
+            } else {
+                ClusterType::Regular
+            };
+            let mut inline_glyph_id = None;
+            match cluster_type {
+                ClusterType::Regular => {
+                    if total_glyphs == cluster_glyph_offset {
+                        if let Some(pending) = pending_inline_glyph.take() {
+                            inline_glyph_id = Some(pending.id);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(pending) = pending_inline_glyph.take() {
+                        glyphs.push(pending);
+                        total_glyphs += 1;
+                    }
+                }
+            }
             push_cluster(
                 clusters,
-                glyphs,
                 char_info,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
                 total_glyphs,
-                if is_newline {
-                    ClusterType::Newline
-                } else {
-                    ClusterType::Regular
-                },
+                cluster_type,
+                inline_glyph_id,
             );
         }
     }
@@ -811,15 +844,15 @@ impl Into<u16> for &ClusterType {
 
 fn push_cluster(
     clusters: &mut Vec<ClusterData>,
-    glyphs: &mut Vec<Glyph>,
     char_info: &(swash::text::cluster::CharInfo, u16),
     cluster_start_char: (usize, char),
-    cluster_glyph_offset: u32,
-    cluster_advance: f32,
-    mut total_glyphs: u32,
+    glyph_offset: u32,
+    advance: f32,
+    total_glyphs: u32,
     cluster_type: ClusterType,
-) -> u32 {
-    let glyph_len = (total_glyphs - cluster_glyph_offset) as u8;
+    inline_glyph_id: Option<u32>,
+) {
+    let glyph_len = (total_glyphs - glyph_offset) as u8;
     let info = ClusterInfo::new(char_info.0.boundary(), cluster_start_char.1);
     let style_index = char_info.1;
     let flags = (&cluster_type).into();
@@ -835,7 +868,7 @@ fn push_cluster(
             text_len: TEXT_LEN,
             glyph_offset: 0,
             text_offset,
-            advance: cluster_advance,
+            advance,
         });
     } else if matches!(cluster_type, ClusterType::Newline) {
         debug_assert_eq!(glyph_len, 1);
@@ -849,6 +882,18 @@ fn push_cluster(
             text_offset,
             advance: 0.0,
         });
+    } else if let Some(inline_id) = inline_glyph_id {
+        // Inline the single zero-offset glyph without touching the glyphs vec
+        clusters.push(ClusterData {
+            info,
+            flags,
+            style_index,
+            glyph_len: 0xFF,
+            text_len: TEXT_LEN,
+            glyph_offset: inline_id,
+            text_offset,
+            advance,
+        });
     } else if matches!(cluster_type, ClusterType::LigatureStart) {
         // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
         // we should add a separate flag to use the cluster advance instead of glyph advance.
@@ -858,23 +903,9 @@ fn push_cluster(
             style_index,
             glyph_len,
             text_len: TEXT_LEN,
-            glyph_offset: cluster_glyph_offset,
+            glyph_offset,
             text_offset,
-            advance: cluster_advance,
-        });
-    } else if glyph_len == 1 && glyphs.last().unwrap().x == 0.0 && glyphs.last().unwrap().y == 0.0 {
-        // This is a single glyph stored inline within `ClusterData`
-        let last_glyph = glyphs.pop().unwrap();
-        total_glyphs -= 1;
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len: 0xFF,
-            text_len: TEXT_LEN,
-            glyph_offset: last_glyph.id,
-            text_offset,
-            advance: cluster_advance,
+            advance,
         });
     } else {
         clusters.push(ClusterData {
@@ -883,13 +914,11 @@ fn push_cluster(
             style_index,
             glyph_len,
             text_len: TEXT_LEN,
-            glyph_offset: cluster_glyph_offset,
+            glyph_offset,
             text_offset,
-            advance: cluster_advance,
+            advance,
         });
     }
-
-    total_glyphs
 }
 
 #[derive(Clone, Debug, PartialEq)]
