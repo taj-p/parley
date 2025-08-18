@@ -438,7 +438,6 @@ impl<B: Brush> LayoutData<B> {
                 glyph_positions,
                 char_infos,
                 source_text.char_indices(),
-                char_infos.first().unwrap(),
             );
         } else {
             let mut clusters = core::mem::take(&mut self.scratch_clusters);
@@ -450,7 +449,6 @@ impl<B: Brush> LayoutData<B> {
                 glyph_positions,
                 char_infos,
                 source_text.char_indices().rev(),
-                char_infos.last().unwrap(),
             );
 
             // Reverse clusters into logical order for RTL
@@ -625,21 +623,18 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     glyph_positions: &[harfrust::GlyphPosition],
     char_infos: &[(swash::text::cluster::CharInfo, u16)],
     char_indices_iter: I,
-    start_char_info: &(swash::text::cluster::CharInfo, u16),
 ) -> f32 {
     let mut char_indices_iter = char_indices_iter.peekable();
-
     let mut cluster_start_char = char_indices_iter.next().unwrap();
     let mut total_glyphs: u32 = 0;
     let mut cluster_glyph_offset: u32 = 0;
     let start_cluster_id = glyph_infos.first().unwrap().cluster;
     let mut cluster_id = start_cluster_id;
-    let mut char_info = start_char_info;
-
+    let mut char_info = &char_infos[cluster_id as usize];
     let mut run_advance = 0.0;
     let mut cluster_advance = 0.0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
-    // pushing the first glyph so we can inline it directly without a push+pop.
+    // pushing the first glyph to `glyphs` because it might be inlined into `ClusterData`.
     let mut pending_inline_glyph: Option<Glyph> = None;
 
     for (glyph_info, glyph_pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
@@ -649,8 +644,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             run_advance += cluster_advance;
             cluster_advance /= num_components as f32;
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-            // Determine cluster type for the completed cluster.
             let cluster_type = if num_components > 1 {
+                debug_assert!(!is_newline);
                 ClusterType::LigatureStart
             } else if is_newline {
                 ClusterType::Newline
@@ -661,6 +656,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             let inline_glyph_id = if matches!(cluster_type, ClusterType::Regular) {
                 pending_inline_glyph.take().map(|g| g.id)
             } else {
+                // This isn't a regular cluster, so we don't inline the glyph and push
+                // it to `glyphs`.
                 if let Some(pending) = pending_inline_glyph.take() {
                     glyphs.push(pending);
                     total_glyphs += 1;

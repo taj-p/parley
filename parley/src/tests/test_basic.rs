@@ -448,8 +448,6 @@ fn text_range_rtl() {
     layout.break_all_lines(Some(100.0));
     layout.align(None, Alignment::Start, AlignmentOptions::default());
 
-    println!("Character count: {}", text.chars().count());
-
     for line in layout.lines() {
         for item in line.items() {
             if let crate::PositionedLayoutItem::GlyphRun(glyph_run) = item {
