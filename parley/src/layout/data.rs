@@ -678,6 +678,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 cluster_type,
                 inline_glyph_id,
             );
+            cluster_glyph_offset = total_glyphs;
 
             if num_components > 1 {
                 // Skip characters until we reach the current cluster
@@ -711,7 +712,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             cluster_advance = 0.0;
             cluster_id = glyph_info.cluster;
             char_info = &char_infos[cluster_id as usize];
-            cluster_glyph_offset = total_glyphs;
             pending_inline_glyph = None;
         }
 
@@ -760,6 +760,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 ClusterType::LigatureStart,
                 None,
             );
+
+            cluster_glyph_offset = total_glyphs;
 
             // Create ligature component clusters for the remaining characters
             let mut i = 1;
@@ -860,6 +862,7 @@ fn push_cluster(
     const TEXT_LEN: u8 = 1;
 
     if matches!(cluster_type, ClusterType::LigatureComponent) {
+        debug_assert_eq!(glyph_len, 0);
         clusters.push(ClusterData {
             info,
             flags,
@@ -883,6 +886,7 @@ fn push_cluster(
             advance: 0.0,
         });
     } else if let Some(inline_id) = inline_glyph_id {
+        debug_assert_eq!(glyph_len, 0);
         // Inline the single zero-offset glyph without touching the glyphs vec
         clusters.push(ClusterData {
             info,
@@ -895,6 +899,7 @@ fn push_cluster(
             advance,
         });
     } else if matches!(cluster_type, ClusterType::LigatureStart) {
+        debug_assert_ne!(glyph_len, 0);
         // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
         // we should add a separate flag to use the cluster advance instead of glyph advance.
         clusters.push(ClusterData {
