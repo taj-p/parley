@@ -9,8 +9,7 @@ use peniko::{
 };
 
 use crate::{
-    Alignment, AlignmentOptions, ContentWidths, FontSettings, FontStack, InlineBox, Layout,
-    LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
+    test_name, Alignment, AlignmentOptions, ContentWidths, FontFamily, FontSettings, FontStack, InlineBox, Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
@@ -474,6 +473,28 @@ fn font_features_liga_off() {
     layout.align(None, Alignment::Start, AlignmentOptions::default());
 
     env.check_layout_snapshot(&layout);
+}
+
+#[test]
+fn variable_fonts() {
+    let mut env = TestEnv::new(test_name!(), None);
+    let text = "Hello World";
+
+    for wght in [100., 500., 1000.] {
+        let mut builder = env.ranged_builder(&text);
+        builder.push_default(StyleProperty::FontStack(FontStack::Single(FontFamily::Named(Cow::Borrowed(&"Arimo")))));
+        builder.push_default(StyleProperty::FontVariations(FontSettings::List(
+            Cow::Borrowed(&[swash::Setting {
+                tag: swash::tag_from_bytes(b"wght"),
+                value: wght
+            }]),
+        )));
+        let mut layout = builder.build(&text);
+        layout.break_all_lines(Some(100.0));
+        layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+        env.check_layout_snapshot(&layout);
+    }
 }
 
 #[test]

@@ -300,13 +300,13 @@ fn shape_item<'a, B: Brush>(
         // Create harfrust shaper
         // TODO: cache this upstream?
         let shaper_data = harfrust::ShaperData::new(&font_ref);
-        // TODO: Use item variations
+        // TODO: Don't waste allocation
         let mut variations: Vec<harfrust::Variation> = vec![];
         // Extract variations from synthesis
-        for (tag, value) in font.font.synthesis.variation_settings() {
+        for variation in rcx.variations(item.variations).unwrap_or(&[]) {
             variations.push(harfrust::Variation {
-                tag: *tag,
-                value: *value,
+                tag: harfrust::Tag::from_u32(variation.tag),
+                value: variation.value,
             });
         }
 
