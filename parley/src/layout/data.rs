@@ -6,6 +6,7 @@ use crate::layout::{ContentWidths, Glyph, LineMetrics, RunMetrics, Style};
 use crate::style::Brush;
 use crate::util::nearly_zero;
 use crate::{Font, OverflowWrap};
+use core::iter;
 use core::ops::Range;
 
 use skrifa::raw::tables::os2::SelectionFlags;
@@ -19,25 +20,20 @@ use core_maths::CoreFloat;
 
 use skrifa::raw::TableProvider;
 
-/// Cluster data - uses swash analysis with harfrust shaping
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClusterData {
-    /// Cluster information from swash text analysis (using our own type)
     pub(crate) info: ClusterInfo,
-    /// Cluster flags (ligature info, style divergence, etc.)
+    /// Cluster flags (see impl methods for details).
     pub(crate) flags: u16,
-    /// Style index for this cluster
+    /// Style index for this cluster.
     pub(crate) style_index: u16,
     /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
-    /// TODO: 0xFF currently not supported - need to support this.
     pub(crate) glyph_len: u8,
     /// Number of text bytes in this cluster
     pub(crate) text_len: u8,
     /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
     /// otherwise, it's an offset into the glyph array with the base
     /// taken from the owning run.
-    /// TODO: If `glyph_len == 0xFF`, use the combination of `glyph_offset` and `text_len` to
-    /// encode the 32 bits of the glyph identifier.
     pub(crate) glyph_offset: u32,
     /// Offset into the text for this cluster
     pub(crate) text_offset: u16,
@@ -82,28 +78,28 @@ impl ClusterInfo {
         }
     }
 
-    /// Get boundary type (critical for line breaking)
+    // Returns the boundary type of the cluster.
     pub(crate) fn boundary(&self) -> Boundary {
         self.boundary
     }
 
-    /// Get whitespace type
+    // Returns the whitespace type of the cluster.
     pub(crate) fn whitespace(&self) -> Whitespace {
         to_whitespace(self.source_char)
     }
 
-    /// Check if this is a word boundary
+    /// Returns if the cluster is a line boundary.
     pub(crate) fn is_boundary(&self) -> bool {
-        self.boundary == Boundary::None
+        self.boundary != Boundary::None
     }
 
-    /// Check if this is an emoji
+    /// Returns if the cluster is an emoji.
     pub(crate) fn is_emoji(&self) -> bool {
         // TODO: Defer to ICU4X properties (see: https://docs.rs/icu/latest/icu/properties/props/struct.Emoji.html).
         matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
     }
 
-    /// Check if this is any kind of whitespace
+    /// Returns if the cluster is any whitespace.
     pub(crate) fn is_whitespace(&self) -> bool {
         self.source_char.is_whitespace()
     }
@@ -120,7 +116,6 @@ fn to_whitespace(c: char) -> Whitespace {
     }
 }
 
-
 /// Harfrust-based run data (updated to use harfrust types)
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RunData {
@@ -128,7 +123,7 @@ pub(crate) struct RunData {
     pub(crate) font_index: usize,
     /// Font size.
     pub(crate) font_size: f32,
-    /// Synthesis for renderer (contains variation settings)
+    /// Synthesis for rendering (contains variation settings)
     pub(crate) synthesis: fontique::Synthesis,
     /// Range of normalized coordinates in the layout data.
     pub(crate) coords_range: Range<usize>,
@@ -357,7 +352,6 @@ impl<B: Brush> LayoutData<B> {
             bidi_level,
         });
     }
-    /// Push data for a new run using HarfBuzz-shaped glyph data.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_run(
         &mut self,
@@ -369,7 +363,6 @@ impl<B: Brush> LayoutData<B> {
         word_spacing: f32,
         letter_spacing: f32,
         source_text: &str,
-        // CharInfo and style index
         char_infos: &[(swash::text::cluster::CharInfo, u16)], // From text analysis
         text_range: Range<usize>,                             // The text range this run covers
         variations: &[harfrust::Variation],
@@ -379,7 +372,7 @@ impl<B: Brush> LayoutData<B> {
         let coords_start = self.coords.len();
 
         if !variations.is_empty() {
-            self.store_variations_properly(&font, variations);
+            self.store_variations(&font, variations);
         }
 
         let coords_end = self.coords.len();
@@ -576,13 +569,20 @@ impl<B: Brush> LayoutData<B> {
 
     /// Store font variations as normalized coordinates using proper axis mapping
     /// This replicates what swash did internally: read fvar table, map variations to correct positions
-    fn store_variations_properly(&mut self, font: &Font, variations: &[harfrust::Variation]) {
+    fn store_variations(&mut self, font: &Font, variations: &[harfrust::Variation]) {
+        use core::cmp::Ordering::*;
+        use skrifa::raw::types::Fixed;
+
         // Try to read font's axis layout from fvar table
         if let Ok(font_ref) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) {
             if let Ok(fvar) = font_ref.fvar() {
                 if let Ok(axes) = fvar.axes() {
+                    let avar = font_ref.avar().ok();
+
                     let axis_count = fvar.axis_count() as usize;
-                    let mut coords = vec![0i16; axis_count];
+                    let offset = self.coords.len();
+                    // Store all coordinates (including zeros for unused axes) in `self.coords`.
+                    self.coords.extend(iter::repeat(0i16).take(axis_count));
 
                     // Map each fontique variation to its correct axis position
                     for variation in variations {
@@ -590,41 +590,38 @@ impl<B: Brush> LayoutData<B> {
 
                         // Find which axis this variation belongs to
                         for (axis_index, axis_record) in axes.iter().enumerate() {
-                            if axis_record.axis_tag() == variation_tag {
-                                // Use this axis's actual range for normalization
-                                let min_val = axis_record.min_value().to_f32();
-                                let default_val = axis_record.default_value().to_f32();
-                                let max_val = axis_record.max_value().to_f32();
-
-                                // Generic normalization (same formula for all axes)
-                                let normalized_f32 = if variation.value >= default_val {
-                                    (variation.value - default_val) / (max_val - default_val)
-                                } else {
-                                    (variation.value - default_val) / (default_val - min_val)
-                                };
-
-                                let clamped = normalized_f32.clamp(-1.0, 1.0);
-                                let normalized_coord = (clamped * 16384.0) as i16;
-
-                                coords[axis_index] = normalized_coord;
-                                break;
+                            if axis_record.axis_tag() != variation_tag {
+                                continue;
                             }
+                            // Use this axis's actual range for normalization
+                            let min = axis_record.min_value();
+                            let default = axis_record.default_value();
+                            let max = axis_record.max_value();
+                            let mut val: Fixed =
+                                Fixed::from_f64(variation.value as f64).clamp(min, max);
+
+                            val = match val.partial_cmp(&default) {
+                                Some(Less) => -((default - val) / (default - min)),
+                                Some(Greater) => (val - default) / (max - default),
+                                Some(Equal) => Fixed::ZERO,
+                                None => Fixed::ZERO,
+                            };
+                            val = val.min(Fixed::ONE).max(-Fixed::ONE);
+
+                            // Apply avar mapping if available
+                            if let Some(avar) = avar.as_ref() {
+                                if let Some(Ok(mapping)) = avar.axis_segment_maps().get(axis_index)
+                                {
+                                    val = mapping.apply(val);
+                                }
+                            }
+
+                            self.coords[offset + axis_index] = val.to_f2dot14().to_bits();
+                            break;
                         }
                     }
-
-                    // Store all coordinates (including zeros for unused axes)
-                    self.coords.extend(coords);
-                    return;
                 }
             }
-        }
-
-        // Fallback: simple storage if fvar reading fails
-        for variation in variations {
-            let normalized_f32 = (variation.value - 400.0) / (1000.0 - 400.0);
-            let clamped = normalized_f32.clamp(-1.0, 1.0);
-            let normalized_coord = (clamped * 16384.0) as i16;
-            self.coords.push(normalized_coord);
         }
     }
 }
