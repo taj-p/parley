@@ -9,7 +9,6 @@ use crate::{Font, OverflowWrap};
 use core::iter;
 use core::ops::Range;
 
-use skrifa::raw::tables::os2::SelectionFlags;
 use swash::text::cluster::{Boundary, Whitespace};
 
 use alloc::vec::Vec;
@@ -17,8 +16,6 @@ use alloc::vec::Vec;
 #[cfg(feature = "libm")]
 #[allow(unused_imports)]
 use core_maths::CoreFloat;
-
-use skrifa::raw::TableProvider;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClusterData {
@@ -105,6 +102,7 @@ impl ClusterInfo {
     }
 }
 
+// TODO: Define `Whitespace` enum in Parley
 fn to_whitespace(c: char) -> Whitespace {
     match c {
         ' ' => Whitespace::Space,
@@ -571,7 +569,7 @@ impl<B: Brush> LayoutData<B> {
     /// This replicates what swash did internally: read fvar table, map variations to correct positions
     fn store_variations(&mut self, font: &Font, variations: &[harfrust::Variation]) {
         use core::cmp::Ordering::*;
-        use skrifa::raw::types::Fixed;
+        use skrifa::raw::{TableProvider, types::Fixed};
 
         // Try to read font's axis layout from fvar table
         if let Ok(font_ref) = skrifa::FontRef::from_index(font.data.as_ref(), font.index) {
@@ -582,7 +580,7 @@ impl<B: Brush> LayoutData<B> {
                     let axis_count = fvar.axis_count() as usize;
                     let offset = self.coords.len();
                     // Store all coordinates (including zeros for unused axes) in `self.coords`.
-                    self.coords.extend(iter::repeat(0i16).take(axis_count));
+                    self.coords.extend(iter::repeat(0).take(axis_count));
 
                     // Map each fontique variation to its correct axis position
                     for variation in variations {
@@ -603,8 +601,7 @@ impl<B: Brush> LayoutData<B> {
                             val = match val.partial_cmp(&default) {
                                 Some(Less) => -((default - val) / (default - min)),
                                 Some(Greater) => (val - default) / (max - default),
-                                Some(Equal) => Fixed::ZERO,
-                                None => Fixed::ZERO,
+                                Some(Equal) | None => Fixed::ZERO,
                             };
                             val = val.min(Fixed::ONE).max(-Fixed::ONE);
 
@@ -916,14 +913,13 @@ struct FontMetrics {
 
 impl FontMetrics {
     fn from(font: &skrifa::FontRef<'_>) -> Self {
+        use skrifa::raw::{tables::os2::SelectionFlags, TableProvider};
+
         // NOTE: This _does not_ copy harfrust's metrics behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60).
         // Instead, we're copying swash's behaviour.
 
-        // QUESTION: Should we instead panic if we can't access the `units_per_em` in the head?
-        // Default units per em for font scaling.
-        //
+        // TODO: Should we panic/return error instead?
         // This is used as a fallback when the actual font units per em cannot be determined.
-        // Most TrueType fonts use 2048, while PostScript fonts typically use 1000.
         const DEFAULT_UNITS_PER_EM: u16 = 2048;
 
         let units_per_em = font
@@ -942,6 +938,7 @@ impl FontMetrics {
         let mut strikethrough_offset = 0;
 
         if let Ok(os2) = font.os2() {
+            strikethrough_offset = os2.y_strikeout_position();
             if os2
                 .fs_selection()
                 .contains(SelectionFlags::USE_TYPO_METRICS)
@@ -951,14 +948,12 @@ impl FontMetrics {
                     descent: os2.s_typo_descender(),
                     leading: os2.s_typo_line_gap(),
                     units_per_em,
-                    strikethrough_offset: os2.y_strikeout_position(),
+                    strikethrough_offset,
                     strikethrough_size: os2.y_strikeout_size(),
                     underline_offset,
                     underline_size,
                 };
-            } else {
-                strikethrough_offset = os2.y_strikeout_position();
-            }
+            } 
         }
         if let Ok(hhea) = font.hhea() {
             return Self {
