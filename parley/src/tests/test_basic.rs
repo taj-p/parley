@@ -447,7 +447,7 @@ fn font_features() {
     builder.push(
         StyleProperty::FontFeatures(FontSettings::List(Cow::Borrowed(&[swash::Setting {
             tag: swash::tag_from_bytes(b"liga"),
-            value: 0,
+            value: 1,
         }]))),
         0..5,
     );
@@ -475,12 +475,11 @@ fn variable_fonts() {
         builder.push_default(StyleProperty::FontStack(FontStack::Single(
             FontFamily::Named(Cow::Borrowed(&"Arimo")),
         )));
-        builder.push(
+        builder.push_default(
             StyleProperty::FontVariations(FontSettings::List(Cow::Borrowed(&[swash::Setting {
                 tag: swash::tag_from_bytes(b"wght"),
                 value: wght,
             }]))),
-            0..5,
         );
         let mut layout = builder.build(&text);
         layout.break_all_lines(Some(100.0));
