@@ -438,7 +438,6 @@ impl<B: Brush> LayoutData<B> {
                 glyph_positions,
                 char_infos,
                 source_text.char_indices(),
-                glyph_infos.first().unwrap().cluster,
                 char_infos.first().unwrap(),
             );
         } else {
@@ -451,7 +450,6 @@ impl<B: Brush> LayoutData<B> {
                 glyph_positions,
                 char_infos,
                 source_text.char_indices().rev(),
-                glyph_infos.first().unwrap().cluster,
                 char_infos.last().unwrap(),
             );
 
@@ -626,13 +624,15 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     glyph_infos: &[harfrust::GlyphInfo],
     glyph_positions: &[harfrust::GlyphPosition],
     char_infos: &[(swash::text::cluster::CharInfo, u16)],
-    mut char_indices_iter: I,
-    start_cluster_id: u32,
+    char_indices_iter: I,
     start_char_info: &(swash::text::cluster::CharInfo, u16),
 ) -> f32 {
+    let mut char_indices_iter = char_indices_iter.peekable();
+
     let mut cluster_start_char = char_indices_iter.next().unwrap();
     let mut total_glyphs: u32 = 0;
     let mut cluster_glyph_offset: u32 = 0;
+    let start_cluster_id = glyph_infos.first().unwrap().cluster;
     let mut cluster_id = start_cluster_id;
     let mut char_info = start_char_info;
 
@@ -668,9 +668,14 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 None
             };
 
+            let text_len = cluster_start_char
+                .0
+                .abs_diff(char_indices_iter.peek().unwrap().0) as u8;
+
             push_cluster(
                 clusters,
                 char_info,
+                text_len,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
@@ -684,20 +689,24 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 // Skip characters until we reach the current cluster
                 for i in 0..(num_components - 1) {
                     cluster_start_char = char_indices_iter.next().unwrap();
-                    if to_whitespace(cluster_start_char.1) == Whitespace::Space {
-                        break;
-                    }
                     let char_info_ = if cluster_id < glyph_info.cluster {
                         &char_infos[(cluster_id + i) as usize]
                     } else {
                         &char_infos[(cluster_id - 1) as usize]
                     };
+                    let text_len = cluster_start_char
+                        .0
+                        .abs_diff(char_indices_iter.peek().unwrap().0)
+                        as u8;
 
-                    char_info_.0.category();
+                    if to_whitespace(cluster_start_char.1) == Whitespace::Space {
+                        break;
+                    }
 
                     push_cluster(
                         clusters,
                         char_info_,
+                        text_len,
                         cluster_start_char,
                         cluster_glyph_offset,
                         cluster_advance,
@@ -750,9 +759,13 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 total_glyphs += 1;
             }
             let ligature_advance = cluster_advance / remaining_chars as f32;
+            let text_len = cluster_start_char
+                .0
+                .abs_diff(char_indices_iter.peek().unwrap().0) as u8;
             push_cluster(
                 clusters,
                 char_info,
+                text_len,
                 cluster_start_char,
                 cluster_glyph_offset,
                 ligature_advance,
@@ -776,9 +789,15 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     &char_infos[(cluster_id - i) as usize]
                 };
 
+                let next_index_or_char_end = char_indices_iter
+                    .peek()
+                    .map(|x| x.0)
+                    .unwrap_or(char.0 + char.1.len_utf8());
+                let text_len = char.0.abs_diff(next_index_or_char_end) as u8;
                 push_cluster(
                     clusters,
                     component_char_info,
+                    text_len,
                     char,
                     cluster_glyph_offset,
                     ligature_advance,
@@ -811,9 +830,15 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     }
                 }
             }
+            let next_index_or_char_end = char_indices_iter
+                .peek()
+                .map(|x| x.0)
+                .unwrap_or(cluster_start_char.0 + cluster_start_char.1.len_utf8());
+            let text_len = cluster_start_char.0.abs_diff(next_index_or_char_end) as u8;
             push_cluster(
                 clusters,
                 char_info,
+                text_len,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
@@ -832,6 +857,7 @@ enum ClusterType {
     LigatureComponent,
     Regular,
     Newline,
+    Space,
 }
 
 impl Into<u16> for &ClusterType {
@@ -839,7 +865,7 @@ impl Into<u16> for &ClusterType {
         match self {
             ClusterType::LigatureStart => ClusterData::LIGATURE_START,
             ClusterType::LigatureComponent => ClusterData::LIGATURE_COMPONENT,
-            ClusterType::Regular | ClusterType::Newline => 0, // No special flags
+            ClusterType::Regular | ClusterType::Newline | ClusterType::Space => 0, // No special flags
         }
     }
 }
@@ -847,6 +873,7 @@ impl Into<u16> for &ClusterType {
 fn push_cluster(
     clusters: &mut Vec<ClusterData>,
     char_info: &(swash::text::cluster::CharInfo, u16),
+    text_len: u8,
     cluster_start_char: (usize, char),
     glyph_offset: u32,
     advance: f32,
@@ -872,7 +899,7 @@ fn push_cluster(
             debug_assert_eq!(glyph_len, 0);
             (0xFF_u8, inline_glyph_id.unwrap(), advance)
         }
-        ClusterType::Regular | ClusterType::LigatureStart => {
+        ClusterType::Regular | ClusterType::LigatureStart | ClusterType::Space => {
             // Regular and ligature start clusters maintain their glyphs and advance.
             debug_assert_ne!(glyph_len, 0);
             (glyph_len, glyph_offset, advance)
@@ -884,8 +911,7 @@ fn push_cluster(
         flags: (&cluster_type).into(),
         style_index: char_info.1,
         glyph_len: final_glyph_len,
-        // Every logical cluster has 1 byte contribution to the text length.
-        text_len: 1,
+        text_len,
         glyph_offset: final_glyph_offset,
         text_offset: cluster_start_char.0 as u16,
         advance: final_advance,

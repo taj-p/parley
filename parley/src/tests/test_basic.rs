@@ -439,6 +439,31 @@ fn ligatures() {
 }
 
 #[test]
+fn text_range_rtl() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "اللغة العربية";
+    let builder = env.ranged_builder(&text);
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(Some(100.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+    println!("Character count: {}", text.chars().count());
+
+    for line in layout.lines() {
+        for item in line.items() {
+            if let crate::PositionedLayoutItem::GlyphRun(glyph_run) = item {
+                glyph_run.run().clusters().for_each(|c| {
+                    if !c.is_space_or_nbsp() {
+                        assert_eq!(c.text_range().len(), 2);
+                    }
+                });
+            }
+        }
+    }
+}
+
+#[test]
 fn font_features() {
     let mut env = TestEnv::new(test_name!(), None);
 
