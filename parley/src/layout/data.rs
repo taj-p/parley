@@ -637,6 +637,14 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     // pushing the first glyph to `glyphs` because it might be inlined into `ClusterData`.
     let mut pending_inline_glyph: Option<Glyph> = None;
 
+    let text_len = |char: (usize, char), chars: &mut iter::Peekable<I>| {
+        let next = chars
+            .peek()
+            .map(|x| x.0)
+            .unwrap_or(char.0 + char.1.len_utf8());
+        char.0.abs_diff(next) as u8
+    };
+
     for (glyph_info, glyph_pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
         // Flush previous cluster if we've reached a new cluster
         if cluster_id != glyph_info.cluster {
@@ -665,14 +673,10 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 None
             };
 
-            let text_len = cluster_start_char
-                .0
-                .abs_diff(char_indices_iter.peek().unwrap().0) as u8;
-
             push_cluster(
                 clusters,
                 char_info,
-                text_len,
+                text_len(cluster_start_char, &mut char_indices_iter),
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
@@ -691,11 +695,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     } else {
                         &char_infos[(cluster_id - 1) as usize]
                     };
-                    let text_len = cluster_start_char
-                        .0
-                        .abs_diff(char_indices_iter.peek().unwrap().0)
-                        as u8;
-
                     if to_whitespace(cluster_start_char.1) == Whitespace::Space {
                         break;
                     }
@@ -703,7 +702,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     push_cluster(
                         clusters,
                         char_info_,
-                        text_len,
+                        text_len(cluster_start_char, &mut char_indices_iter),
                         cluster_start_char,
                         cluster_glyph_offset,
                         cluster_advance,
@@ -756,13 +755,10 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 total_glyphs += 1;
             }
             let ligature_advance = cluster_advance / remaining_chars as f32;
-            let text_len = cluster_start_char
-                .0
-                .abs_diff(char_indices_iter.peek().unwrap().0) as u8;
             push_cluster(
                 clusters,
                 char_info,
-                text_len,
+                text_len(cluster_start_char, &mut char_indices_iter),
                 cluster_start_char,
                 cluster_glyph_offset,
                 ligature_advance,
@@ -786,15 +782,10 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     &char_infos[(cluster_id - i) as usize]
                 };
 
-                let next_index_or_char_end = char_indices_iter
-                    .peek()
-                    .map(|x| x.0)
-                    .unwrap_or(char.0 + char.1.len_utf8());
-                let text_len = char.0.abs_diff(next_index_or_char_end) as u8;
                 push_cluster(
                     clusters,
                     component_char_info,
-                    text_len,
+                    text_len(char, &mut char_indices_iter),
                     char,
                     cluster_glyph_offset,
                     ligature_advance,
@@ -827,15 +818,10 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     }
                 }
             }
-            let next_index_or_char_end = char_indices_iter
-                .peek()
-                .map(|x| x.0)
-                .unwrap_or(cluster_start_char.0 + cluster_start_char.1.len_utf8());
-            let text_len = cluster_start_char.0.abs_diff(next_index_or_char_end) as u8;
             push_cluster(
                 clusters,
                 char_info,
-                text_len,
+                text_len(cluster_start_char, &mut char_indices_iter),
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
