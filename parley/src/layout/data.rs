@@ -102,7 +102,6 @@ impl ClusterInfo {
     }
 }
 
-// TODO: Define `Whitespace` enum in Parley
 fn to_whitespace(c: char) -> Whitespace {
     match c {
         ' ' => Whitespace::Space,
@@ -418,7 +417,8 @@ impl<B: Brush> LayoutData<B> {
             advance: 0.,
         };
 
-        // Process glyphs in visual order (HarfBuzz output) but store clusters in logical order
+        // HarfBuzz returns glyphs in visual order, so we need to process them as such while
+        // maintaining logical ordering of clusters.
 
         let glyph_infos = glyph_buffer.glyph_infos();
         if glyph_infos.is_empty() {
@@ -427,9 +427,7 @@ impl<B: Brush> LayoutData<B> {
         let glyph_positions = glyph_buffer.glyph_positions();
         let scale_factor = font_size / units_per_em;
         let cluster_range_start = self.clusters.len();
-
         let is_rtl = bidi_level & 1 == 1;
-
         if !is_rtl {
             run.advance = process_clusters(
                 &mut self.clusters,
@@ -563,8 +561,7 @@ impl<B: Brush> LayoutData<B> {
         }
     }
 
-    /// Store font variations as normalized coordinates using proper axis mapping
-    /// This replicates what swash did internally: read fvar table, map variations to correct positions
+    /// Normalises and stores the variation coordinates within the layout.
     fn store_variations(&mut self, font: &Font, variations: &[harfrust::Variation]) {
         use core::cmp::Ordering::*;
         use skrifa::raw::{TableProvider, types::Fixed};
