@@ -19,7 +19,56 @@ use core_maths::CoreFloat;
 
 use skrifa::raw::TableProvider;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+/// Cluster data - uses swash analysis with harfrust shaping
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct ClusterData {
+    /// Cluster information from swash text analysis (using our own type)
+    pub(crate) info: ClusterInfo,
+    /// Cluster flags (ligature info, style divergence, etc.)
+    pub(crate) flags: u16,
+    /// Style index for this cluster
+    pub(crate) style_index: u16,
+    /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
+    /// TODO: 0xFF currently not supported - need to support this.
+    pub(crate) glyph_len: u8,
+    /// Number of text bytes in this cluster
+    pub(crate) text_len: u8,
+    /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
+    /// otherwise, it's an offset into the glyph array with the base
+    /// taken from the owning run.
+    /// TODO: If `glyph_len == 0xFF`, use the combination of `glyph_offset` and `text_len` to
+    /// encode the 32 bits of the glyph identifier.
+    pub(crate) glyph_offset: u32,
+    /// Offset into the text for this cluster
+    pub(crate) text_offset: u16,
+    /// Advance width for this cluster
+    pub(crate) advance: f32,
+}
+
+impl ClusterData {
+    pub(crate) const LIGATURE_START: u16 = 1;
+    pub(crate) const LIGATURE_COMPONENT: u16 = 2;
+    pub(crate) const DIVERGENT_STYLES: u16 = 4;
+
+    pub(crate) fn is_ligature_start(self) -> bool {
+        self.flags & Self::LIGATURE_START != 0
+    }
+
+    pub(crate) fn is_ligature_component(self) -> bool {
+        self.flags & Self::LIGATURE_COMPONENT != 0
+    }
+
+    pub(crate) fn has_divergent_styles(self) -> bool {
+        self.flags & Self::DIVERGENT_STYLES != 0
+    }
+
+    pub(crate) fn text_range(self, run: &RunData) -> Range<usize> {
+        let start = run.text_range.start + self.text_offset as usize;
+        start..start + self.text_len as usize
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClusterInfo {
     boundary: Boundary,
     source_char: char,
@@ -71,54 +120,6 @@ fn to_whitespace(c: char) -> Whitespace {
     }
 }
 
-/// Cluster data - uses swash analysis with harfrust shaping
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct ClusterData {
-    /// Cluster information from swash text analysis (using our own type)
-    pub(crate) info: ClusterInfo,
-    /// Cluster flags (ligature info, style divergence, etc.)
-    pub(crate) flags: u16,
-    /// Style index for this cluster
-    pub(crate) style_index: u16,
-    /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
-    /// TODO: 0xFF currently not supported - need to support this.
-    pub(crate) glyph_len: u8,
-    /// Number of text bytes in this cluster
-    pub(crate) text_len: u8,
-    /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
-    /// otherwise, it's an offset into the glyph array with the base
-    /// taken from the owning run.
-    /// TODO: If `glyph_len == 0xFF`, use the combination of `glyph_offset` and `text_len` to
-    /// encode the 32 bits of the glyph identifier.
-    pub(crate) glyph_offset: u32,
-    /// Offset into the text for this cluster
-    pub(crate) text_offset: u16,
-    /// Advance width for this cluster
-    pub(crate) advance: f32,
-}
-
-impl ClusterData {
-    pub(crate) const LIGATURE_START: u16 = 1;
-    pub(crate) const LIGATURE_COMPONENT: u16 = 2;
-    pub(crate) const DIVERGENT_STYLES: u16 = 4;
-
-    pub(crate) fn is_ligature_start(self) -> bool {
-        self.flags & Self::LIGATURE_START != 0
-    }
-
-    pub(crate) fn is_ligature_component(self) -> bool {
-        self.flags & Self::LIGATURE_COMPONENT != 0
-    }
-
-    pub(crate) fn has_divergent_styles(self) -> bool {
-        self.flags & Self::DIVERGENT_STYLES != 0
-    }
-
-    pub(crate) fn text_range(self, run: &RunData) -> Range<usize> {
-        let start = run.text_range.start + self.text_offset as usize;
-        start..start + self.text_len as usize
-    }
-}
 
 /// Harfrust-based run data (updated to use harfrust types)
 #[derive(Clone, Debug, PartialEq)]
