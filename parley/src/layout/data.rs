@@ -690,14 +690,15 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 // Skip characters until we reach the current cluster
                 for i in 0..(num_components - 1) {
                     cluster_start_char = char_indices_iter.next().unwrap();
+                    if to_whitespace(cluster_start_char.1) == Whitespace::Space {
+                        break;
+                    }
+                    // Iterate in correct (LTR or RTL) order
                     let char_info_ = if cluster_id < glyph_info.cluster {
                         &char_infos[(cluster_id + i) as usize]
                     } else {
                         &char_infos[(cluster_id - 1) as usize]
                     };
-                    if to_whitespace(cluster_start_char.1) == Whitespace::Space {
-                        break;
-                    }
 
                     push_cluster(
                         clusters,
