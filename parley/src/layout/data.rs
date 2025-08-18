@@ -261,6 +261,7 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) full_width: f32,
     pub(crate) height: f32,
     pub(crate) fonts: Vec<Font>,
+    pub(crate) font_metrics: Vec<FontMetrics>,
     pub(crate) coords: Vec<i16>,
 
     // Input (/ output of style resolution)
@@ -299,6 +300,7 @@ impl<B: Brush> Default for LayoutData<B> {
             full_width: 0.,
             height: 0.,
             fonts: Vec::new(),
+            font_metrics: Vec::new(),
             coords: Vec::new(),
             styles: Vec::new(),
             inline_boxes: Vec::new(),
@@ -326,6 +328,7 @@ impl<B: Brush> LayoutData<B> {
         self.full_width = 0.;
         self.height = 0.;
         self.fonts.clear();
+        self.font_metrics.clear();
         self.coords.clear();
         self.styles.clear();
         self.inline_boxes.clear();
@@ -365,14 +368,10 @@ impl<B: Brush> LayoutData<B> {
         text_range: Range<usize>,                             // The text range this run covers
         variations: &[harfrust::Variation],
     ) {
-        // Store font variations as normalized coordinates FIRST (before font moves)
-        // Proper solution: Read font's fvar table and map variations to correct axis positions
         let coords_start = self.coords.len();
-
         if !variations.is_empty() {
             self.store_variations(&font, variations);
         }
-
         let coords_end = self.coords.len();
 
         let font_index = self
@@ -380,27 +379,26 @@ impl<B: Brush> LayoutData<B> {
             .iter()
             .position(|f| *f == font)
             .unwrap_or_else(|| {
+                debug_assert_eq!(self.fonts.len(), self.font_metrics.len());
+                let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap();
+                self.font_metrics.push(FontMetrics::from(&font_ref));
                 let index = self.fonts.len();
                 self.fonts.push(font);
                 index
             });
 
-        // TODO: I think we need to calculate these values upstream. It's likely we're going to be calculating them duplicately.
-        // TODO(taj): Why do we need self.fonts? And do we need to do this here? And should I store the font ref alongside the font?
-        let font = &self.fonts[font_index];
-        let font = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap(); // TODO(taj): Handle unwrap.
-
-        let metrics = FontMetrics::from(&font);
+        let metrics = &self.font_metrics[font_index];
         let units_per_em = metrics.units_per_em as f32;
-
-        let metrics = RunMetrics {
-            ascent: font_size * metrics.ascent as f32 / units_per_em,
-            descent: -font_size * metrics.descent as f32 / units_per_em,
-            leading: font_size * metrics.leading as f32 / units_per_em,
-            underline_offset: font_size * metrics.underline_offset as f32 / units_per_em,
-            underline_size: font_size * metrics.underline_size as f32 / units_per_em,
-            strikethrough_offset: font_size * metrics.strikethrough_offset as f32 / units_per_em,
-            strikethrough_size: font_size * metrics.strikethrough_size as f32 / units_per_em,
+        let metrics = {
+            RunMetrics {
+                ascent: font_size * metrics.ascent as f32 / units_per_em,
+                descent: -font_size * metrics.descent as f32 / units_per_em,
+                leading: font_size * metrics.leading as f32 / units_per_em,
+                underline_offset: font_size * metrics.underline_offset as f32 / units_per_em,
+                underline_size: font_size * metrics.underline_size as f32 / units_per_em,
+                strikethrough_offset: font_size * metrics.strikethrough_offset as f32 / units_per_em,
+                strikethrough_size: font_size * metrics.strikethrough_size as f32 / units_per_em,
+            }
         };
 
         let cluster_range = self.clusters.len()..self.clusters.len();
@@ -897,7 +895,8 @@ fn push_cluster(
     total_glyphs
 }
 
-struct FontMetrics {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FontMetrics {
     ascent: i16,
     descent: i16,
     leading: i16,
@@ -913,7 +912,7 @@ struct FontMetrics {
 
 impl FontMetrics {
     fn from(font: &skrifa::FontRef<'_>) -> Self {
-        use skrifa::raw::{tables::os2::SelectionFlags, TableProvider};
+        use skrifa::raw::{TableProvider, tables::os2::SelectionFlags};
 
         // NOTE: This _does not_ copy harfrust's metrics behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60).
         // Instead, we're copying swash's behaviour.
@@ -953,7 +952,7 @@ impl FontMetrics {
                     underline_offset,
                     underline_size,
                 };
-            } 
+            }
         }
         if let Ok(hhea) = font.hhea() {
             return Self {
