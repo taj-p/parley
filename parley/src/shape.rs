@@ -524,6 +524,6 @@ impl From<&QueryFont> for SelectedFont {
 
 impl PartialEq for SelectedFont {
     fn eq(&self, other: &Self) -> bool {
-        self.font.family == other.font.family
+        self.font.family == other.font.family && self.font.synthesis == other.font.synthesis
     }
 }
