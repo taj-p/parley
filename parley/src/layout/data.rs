@@ -652,16 +652,11 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             let num_components = cluster_id.abs_diff(glyph_info.cluster);
             run_advance += cluster_advance;
             cluster_advance /= num_components as f32;
-
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-
-            // For ligatures, the start gets the full advance, components get zero
-
             total_glyphs = push_cluster(
                 clusters,
                 glyphs,
                 char_info,
-                1,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
@@ -677,8 +672,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 },
             );
 
-            // Skip characters until we reach the current cluster
             if num_components > 1 {
+                // Skip characters until we reach the current cluster
                 for i in 0..(num_components - 1) {
                     cluster_start_char = char_indices_iter.next().unwrap();
                     if to_whitespace(cluster_start_char.1) == Whitespace::Space {
@@ -696,7 +691,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                         clusters,
                         glyphs,
                         char_info_,
-                        1,
                         cluster_start_char,
                         cluster_glyph_offset,
                         cluster_advance,
@@ -752,7 +746,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 clusters,
                 glyphs,
                 char_info,
-                1,
                 cluster_start_char,
                 cluster_glyph_offset,
                 ligature_advance,
@@ -776,7 +769,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     clusters,
                     glyphs,
                     component_char_info,
-                    1,
                     char,
                     cluster_glyph_offset,
                     ligature_advance,
@@ -792,7 +784,6 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 clusters,
                 glyphs,
                 char_info,
-                1,
                 cluster_start_char,
                 cluster_glyph_offset,
                 cluster_advance,
@@ -830,7 +821,6 @@ fn push_cluster(
     clusters: &mut Vec<ClusterData>,
     glyphs: &mut Vec<Glyph>,
     char_info: &(swash::text::cluster::CharInfo, u16),
-    text_len: u8,
     cluster_start_char: (usize, char),
     cluster_glyph_offset: u32,
     cluster_advance: f32,
@@ -842,7 +832,7 @@ fn push_cluster(
     let style_index = char_info.1;
     let flags = (&cluster_type).into();
     let text_offset = cluster_start_char.0 as u16;
-    debug_assert_eq!(text_len, 1);
+    const TEXT_LEN: u8 = 1;
 
     if matches!(cluster_type, ClusterType::LigatureComponent) {
         clusters.push(ClusterData {
@@ -850,7 +840,7 @@ fn push_cluster(
             flags,
             style_index,
             glyph_len: 0,
-            text_len,
+            text_len: TEXT_LEN,
             glyph_offset: 0,
             text_offset,
             advance: cluster_advance,
@@ -862,7 +852,7 @@ fn push_cluster(
             flags,
             style_index,
             glyph_len: 0,
-            text_len,
+            text_len: TEXT_LEN,
             glyph_offset: 0,
             text_offset,
             advance: 0.0,
@@ -875,7 +865,7 @@ fn push_cluster(
             flags,
             style_index,
             glyph_len,
-            text_len,
+            text_len: TEXT_LEN,
             glyph_offset: cluster_glyph_offset,
             text_offset,
             advance: cluster_advance,
@@ -889,7 +879,7 @@ fn push_cluster(
             flags,
             style_index,
             glyph_len: 0xFF,
-            text_len,
+            text_len: TEXT_LEN,
             glyph_offset: last_glyph.id,
             text_offset,
             advance: cluster_advance,
@@ -900,7 +890,7 @@ fn push_cluster(
             flags,
             style_index,
             glyph_len,
-            text_len,
+            text_len: TEXT_LEN,
             glyph_offset: cluster_glyph_offset,
             text_offset,
             advance: cluster_advance,
