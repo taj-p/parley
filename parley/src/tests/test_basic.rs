@@ -9,7 +9,8 @@ use peniko::{
 };
 
 use crate::{
-    test_name, Alignment, AlignmentOptions, ContentWidths, FontFamily, FontSettings, FontStack, InlineBox, Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse
+    Alignment, AlignmentOptions, ContentWidths, FontFamily, FontSettings, FontStack, InlineBox,
+    Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
@@ -438,36 +439,25 @@ fn ligatures() {
 }
 
 #[test]
-fn font_features_liga_on() {
+fn font_features() {
     let mut env = TestEnv::new(test_name!(), None);
 
     let text = "fi ".repeat(4);
     let mut builder = env.ranged_builder(&text);
-    builder.push_default(StyleProperty::FontFeatures(FontSettings::List(
-        Cow::Borrowed(&[swash::Setting {
-            tag: swash::tag_from_bytes(b"liga"),
-            value: 1,
-        }]),
-    )));
-    let mut layout = builder.build(&text);
-    layout.break_all_lines(Some(100.0));
-    layout.align(None, Alignment::Start, AlignmentOptions::default());
-
-    env.check_layout_snapshot(&layout);
-}
-
-#[test]
-fn font_features_liga_off() {
-    let mut env = TestEnv::new(test_name!(), None);
-
-    let text = "fi ".repeat(4);
-    let mut builder = env.ranged_builder(&text);
-    builder.push_default(StyleProperty::FontFeatures(FontSettings::List(
-        Cow::Borrowed(&[swash::Setting {
+    builder.push(
+        StyleProperty::FontFeatures(FontSettings::List(Cow::Borrowed(&[swash::Setting {
             tag: swash::tag_from_bytes(b"liga"),
             value: 0,
-        }]),
-    )));
+        }]))),
+        0..5,
+    );
+    builder.push(
+        StyleProperty::FontFeatures(FontSettings::List(Cow::Borrowed(&[swash::Setting {
+            tag: swash::tag_from_bytes(b"liga"),
+            value: 0,
+        }]))),
+        5..10,
+    );
     let mut layout = builder.build(&text);
     layout.break_all_lines(Some(100.0));
     layout.align(None, Alignment::Start, AlignmentOptions::default());
@@ -482,13 +472,16 @@ fn variable_fonts() {
 
     for wght in [100., 500., 1000.] {
         let mut builder = env.ranged_builder(&text);
-        builder.push_default(StyleProperty::FontStack(FontStack::Single(FontFamily::Named(Cow::Borrowed(&"Arimo")))));
-        builder.push_default(StyleProperty::FontVariations(FontSettings::List(
-            Cow::Borrowed(&[swash::Setting {
-                tag: swash::tag_from_bytes(b"wght"),
-                value: wght
-            }]),
+        builder.push_default(StyleProperty::FontStack(FontStack::Single(
+            FontFamily::Named(Cow::Borrowed(&"Arimo")),
         )));
+        builder.push(
+            StyleProperty::FontVariations(FontSettings::List(Cow::Borrowed(&[swash::Setting {
+                tag: swash::tag_from_bytes(b"wght"),
+                value: wght,
+            }]))),
+            0..5,
+        );
         let mut layout = builder.build(&text);
         layout.break_all_lines(Some(100.0));
         layout.align(None, Alignment::Start, AlignmentOptions::default());
