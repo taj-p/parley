@@ -855,75 +855,41 @@ fn push_cluster(
     inline_glyph_id: Option<u32>,
 ) {
     let glyph_len = (total_glyphs - glyph_offset) as u8;
-    let info = ClusterInfo::new(char_info.0.boundary(), cluster_start_char.1);
-    let style_index = char_info.1;
-    let flags = (&cluster_type).into();
-    let text_offset = cluster_start_char.0 as u16;
-    const TEXT_LEN: u8 = 1;
 
-    if matches!(cluster_type, ClusterType::LigatureComponent) {
-        debug_assert_eq!(glyph_len, 0);
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len: 0,
-            text_len: TEXT_LEN,
-            glyph_offset: 0,
-            text_offset,
-            advance,
-        });
-    } else if matches!(cluster_type, ClusterType::Newline) {
-        debug_assert_eq!(glyph_len, 1);
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len: 0,
-            text_len: TEXT_LEN,
-            glyph_offset: 0,
-            text_offset,
-            advance: 0.0,
-        });
-    } else if let Some(inline_id) = inline_glyph_id {
-        debug_assert_eq!(glyph_len, 0);
-        // Inline the single zero-offset glyph without touching the glyphs vec
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len: 0xFF,
-            text_len: TEXT_LEN,
-            glyph_offset: inline_id,
-            text_offset,
-            advance,
-        });
-    } else if matches!(cluster_type, ClusterType::LigatureStart) {
-        debug_assert_ne!(glyph_len, 0);
-        // It's odd that this needs to use the GlyphIter strategy. I'm wondering whether
-        // we should add a separate flag to use the cluster advance instead of glyph advance.
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len,
-            text_len: TEXT_LEN,
-            glyph_offset,
-            text_offset,
-            advance,
-        });
-    } else {
-        clusters.push(ClusterData {
-            info,
-            flags,
-            style_index,
-            glyph_len,
-            text_len: TEXT_LEN,
-            glyph_offset,
-            text_offset,
-            advance,
-        });
-    }
+    let (final_glyph_len, final_glyph_offset, final_advance) = match cluster_type {
+        ClusterType::LigatureComponent => {
+            // Ligature components have no glyphs, only advance.
+            debug_assert_eq!(glyph_len, 0);
+            (0_u8, 0_u32, advance)
+        }
+        ClusterType::Newline => {
+            // Newline clusters are stripped of their glyph contribution.
+            debug_assert_eq!(glyph_len, 1);
+            (0_u8, 0_u32, 0.0)
+        }
+        _ if inline_glyph_id.is_some() => {
+            // Inline glyphs are stored inline within `ClusterData`
+            debug_assert_eq!(glyph_len, 0);
+            (0xFF_u8, inline_glyph_id.unwrap(), advance)
+        }
+        ClusterType::Regular | ClusterType::LigatureStart => {
+            // Regular and ligature start clusters maintain their glyphs and advance.
+            debug_assert_ne!(glyph_len, 0);
+            (glyph_len, glyph_offset, advance)
+        }
+    };
+
+    clusters.push(ClusterData {
+        info: ClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
+        flags: (&cluster_type).into(),
+        style_index: char_info.1,
+        glyph_len: final_glyph_len,
+        // Every logical cluster has 1 byte contribution to the text length.
+        text_len: 1,
+        glyph_offset: final_glyph_offset,
+        text_offset: cluster_start_char.0 as u16,
+        advance: final_advance,
+    });
 }
 
 #[derive(Clone, Debug, PartialEq)]
