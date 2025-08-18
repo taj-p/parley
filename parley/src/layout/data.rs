@@ -857,7 +857,6 @@ enum ClusterType {
     LigatureComponent,
     Regular,
     Newline,
-    Space,
 }
 
 impl Into<u16> for &ClusterType {
@@ -865,7 +864,7 @@ impl Into<u16> for &ClusterType {
         match self {
             ClusterType::LigatureStart => ClusterData::LIGATURE_START,
             ClusterType::LigatureComponent => ClusterData::LIGATURE_COMPONENT,
-            ClusterType::Regular | ClusterType::Newline | ClusterType::Space => 0, // No special flags
+            ClusterType::Regular | ClusterType::Newline => 0, // No special flags
         }
     }
 }
@@ -899,7 +898,7 @@ fn push_cluster(
             debug_assert_eq!(glyph_len, 0);
             (0xFF_u8, inline_glyph_id.unwrap(), advance)
         }
-        ClusterType::Regular | ClusterType::LigatureStart | ClusterType::Space => {
+        ClusterType::Regular | ClusterType::LigatureStart => {
             // Regular and ligature start clusters maintain their glyphs and advance.
             debug_assert_ne!(glyph_len, 0);
             (glyph_len, glyph_offset, advance)
