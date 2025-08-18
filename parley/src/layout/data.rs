@@ -919,18 +919,13 @@ pub(crate) struct FontMetrics {
 impl FontMetrics {
     fn from(font: &skrifa::FontRef<'_>) -> Self {
         use skrifa::raw::{TableProvider, tables::os2::SelectionFlags};
-
         // NOTE: This _does not_ copy harfrust's metrics behaviour (https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/glyph_metrics.rs#L55-L60).
-        // Instead, we're copying swash's behaviour.
-
-        // TODO: Should we panic/return error instead?
-        // This is used as a fallback when the actual font units per em cannot be determined.
-        const DEFAULT_UNITS_PER_EM: u16 = 2048;
 
         let units_per_em = font
             .head()
             .map(|h| h.units_per_em())
-            .unwrap_or(DEFAULT_UNITS_PER_EM);
+            // TODO: Should we panic/return error instead?
+            .unwrap_or(2048);
 
         let (underline_offset, underline_size) = {
             let post = font.post().unwrap(); // TODO: Handle invalid font?
