@@ -25,12 +25,16 @@ const DEFERRED_BOXES_CAPACITY: usize = 16;
 
 pub(crate) struct ShapeContext {
     unicode_buffer: harfrust::UnicodeBuffer,
+    variations: Vec<harfrust::Variation>,
+    features: Vec<harfrust::Feature>,
 }
 
 impl Default for ShapeContext {
     fn default() -> Self {
         Self {
             unicode_buffer: harfrust::UnicodeBuffer::new(),
+            variations: Vec::new(),
+            features: Vec::new(),
         }
     }
 }
@@ -276,17 +280,16 @@ fn shape_item<'a, B: Brush>(
         // Create harfrust shaper
         // TODO: cache this upstream?
         let shaper_data = harfrust::ShaperData::new(&font_ref);
-        // TODO: Don't waste allocation
-        let mut variations: Vec<harfrust::Variation> = vec![];
         // Extract variations from synthesis
+        scx.variations.clear();
         for variation in rcx.variations(item.variations).unwrap_or(&[]) {
-            variations.push(harfrust::Variation {
+            scx.variations.push(harfrust::Variation {
                 tag: harfrust::Tag::from_u32(variation.tag),
                 value: variation.value,
             });
         }
 
-        let instance = harfrust::ShaperInstance::from_variations(&font_ref, &variations);
+        let instance = harfrust::ShaperInstance::from_variations(&font_ref, &scx.variations);
         // TODO: Don't create a new shaper for each segment.
         let harf_shaper = shaper_data
             .shaper(&font_ref)
@@ -322,9 +325,9 @@ fn shape_item<'a, B: Brush>(
             }
         }
 
-        let mut features: Vec<harfrust::Feature> = vec![];
+        scx.features.clear();
         for feature in rcx.features(item.features).unwrap_or(&[]) {
-            features.push(harfrust::Feature {
+            scx.features.push(harfrust::Feature {
                 tag: harfrust::Tag::from_u32(feature.tag),
                 value: feature.value as u32,
                 start: 0,
@@ -332,7 +335,7 @@ fn shape_item<'a, B: Brush>(
             });
         }
 
-        let glyph_buffer = harf_shaper.shape(buffer, &features);
+        let glyph_buffer = harf_shaper.shape(buffer, &scx.features);
 
         // Extract relevant CharInfo slice for this segment
         let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
@@ -353,7 +356,7 @@ fn shape_item<'a, B: Brush>(
             segment_text,
             segment_infos,
             (text_range.start + segment_start_offset)..(text_range.start + segment_end_offset),
-            &variations,
+            &scx.variations,
         );
 
         // Replace buffer to reuse allocation in next iteration.
