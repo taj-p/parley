@@ -284,6 +284,12 @@ fn shape_item<'a, B: Brush>(
         let shaper_data = harfrust::ShaperData::new(&font_ref);
         // Extract variations from synthesis
         scx.variations.clear();
+        for (tag, value) in font.font.synthesis.variation_settings() {
+            scx.variations.push(harfrust::Variation {
+                tag: *tag,
+                value: *value,
+            });
+        }
         for variation in rcx.variations(item.variations).unwrap_or(&[]) {
             scx.variations.push(harfrust::Variation {
                 tag: harfrust::Tag::from_u32(variation.tag),
