@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use super::layout::Layout;
 use super::resolve::{RangedStyle, ResolveContext, Resolved};
 use super::style::{Brush, FontFeature, FontVariation};
-use crate::Font;
+use crate::{swash_convert, Font};
 use crate::inline_box::InlineBox;
 use crate::util::nearly_eq;
 
@@ -33,30 +33,6 @@ impl Default for ShapeContext {
             unicode_buffer: harfrust::UnicodeBuffer::new(),
         }
     }
-}
-
-/// Convert swash Script enum to harfrust Script for proper text shaping.
-/// Maps Unicode script codes to their corresponding OpenType script tags.
-fn convert_script_to_harfrust(swash_script: Script) -> harfrust::Script {
-    let tag = match swash_script {
-        Script::Arabic => harfrust::script::ARABIC,
-        Script::Latin => harfrust::script::LATIN,
-        Script::Common => harfrust::script::COMMON,
-        Script::Unknown => harfrust::script::UNKNOWN,
-        Script::Inherited => harfrust::script::INHERITED,
-        Script::Cyrillic => harfrust::script::CYRILLIC,
-        Script::Greek => harfrust::script::GREEK,
-        Script::Hebrew => harfrust::script::HEBREW,
-        Script::Han => harfrust::script::HAN,
-        Script::Hiragana => harfrust::script::HIRAGANA,
-        Script::Katakana => harfrust::script::KATAKANA,
-        Script::Devanagari => harfrust::script::DEVANAGARI,
-        Script::Thai => harfrust::script::THAI,
-        Script::Hangul => harfrust::script::HANGUL,
-        _ => todo!("Unmapped script: {:?}", swash_script),
-    };
-
-    tag
 }
 
 struct Item {
@@ -336,7 +312,7 @@ fn shape_item<'a, B: Brush>(
         };
         buffer.set_direction(direction);
 
-        let script = convert_script_to_harfrust(item.script);
+        let script = swash_convert::script_to_harfrust(item.script);
         buffer.set_script(script);
 
         if let Some(lang) = item.locale {
