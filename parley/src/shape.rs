@@ -215,7 +215,7 @@ fn shape_item<'a, B: Brush>(
     let mut font_selector =
         FontSelector::new(fq, rcx, styles, first_style_index, item.script, item.locale);
 
-    // Parse text into clusters (exactly like swash does) - but only for current item
+    // Parse text into clusters of the current item
     let tokens =
         item_text
             .char_indices()
@@ -275,8 +275,9 @@ fn shape_item<'a, B: Brush>(
         // Shape the entire segment text including newlines
         // The line breaking algorithm will handle newlines automatically
 
+        // TODO: How do we want to handle errors like this?
         let font_ref =
-            harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap(); // TODO: Propagate error
+            harfrust::FontRef::from_index(font.font.blob.as_ref(), font.font.index).unwrap();
 
         // Create harfrust shaper
         // TODO: cache this upstream?
