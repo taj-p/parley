@@ -6,7 +6,6 @@
 
 use alloc::vec::Vec;
 
-// Parley imports
 use super::layout::Layout;
 use super::resolve::{RangedStyle, ResolveContext, Resolved};
 use super::style::{Brush, FontFeature, FontVariation};
@@ -14,16 +13,13 @@ use crate::{swash_convert, Font};
 use crate::inline_box::InlineBox;
 use crate::util::nearly_eq;
 
-// External crate imports
 use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
 use swash::text::cluster::{CharCluster, CharInfo, Token};
 use swash::text::{Language, Script};
 
-/// Capacity hint for deferred inline boxes to avoid repeated allocations
-const DEFERRED_BOXES_CAPACITY: usize = 16;
-
 pub(crate) struct ShapeContext {
+    deferred_boxes: Vec<usize>,
     unicode_buffer: harfrust::UnicodeBuffer,
     variations: Vec<harfrust::Variation>,
     features: Vec<harfrust::Feature>,
@@ -32,6 +28,7 @@ pub(crate) struct ShapeContext {
 impl Default for ShapeContext {
     fn default() -> Self {
         Self {
+            deferred_boxes: Vec::new(),
             unicode_buffer: harfrust::UnicodeBuffer::new(),
             variations: Vec::new(),
             features: Vec::new(),
@@ -100,7 +97,6 @@ pub(crate) fn shape_text<'a, B: Brush>(
 
     let mut inline_box_iter = inline_boxes.iter().enumerate();
     let mut current_box = inline_box_iter.next();
-    let mut deferred_boxes: Vec<usize> = Vec::with_capacity(DEFERRED_BOXES_CAPACITY);
 
     // Iterate over characters in the text (same as original)
     for ((char_index, (byte_index, ch)), (info, style_index)) in
@@ -134,7 +130,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
         while let Some((box_idx, inline_box)) = current_box {
             if inline_box.index == byte_index {
                 break_run = true;
-                deferred_boxes.push(box_idx);
+                scx.deferred_boxes.push(box_idx);
                 current_box = inline_box_iter.next();
             } else {
                 break;
@@ -164,7 +160,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
             char_range.start = char_range.end;
         }
 
-        for box_idx in deferred_boxes.drain(0..) {
+        for box_idx in scx.deferred_boxes.drain(..) {
             layout.data.push_inline_box(box_idx);
         }
 
