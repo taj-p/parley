@@ -6,7 +6,9 @@ pub(crate) fn script_to_fontique(script: swash::text::Script) -> fontique::Scrip
 }
 
 pub(crate) fn script_to_harfrust(script: swash::text::Script) -> harfrust::Script {
-    *HARFRUST_SCRIPT_TAGS.get(script as usize).unwrap_or(&harfrust::script::UNKNOWN)
+    *HARFRUST_SCRIPT_TAGS
+        .get(script as usize)
+        .unwrap_or(&harfrust::script::UNKNOWN)
 }
 
 pub(crate) fn locale_to_fontique(locale: swash::text::Language) -> Option<fontique::Language> {
@@ -56,7 +58,6 @@ const FONTIQUE_SCRIPT_TAGS: [[u8; 4]; 157] = [
     *b"Tirh", *b"Ugar", *b"Vaii", *b"Wara", *b"Wcho", *b"Xpeo", *b"Xsux", *b"Yezi", *b"Yiii",
     *b"Zanb", *b"Zinh", *b"Zyyy", *b"Zzzz",
 ];
-
 
 const HARFRUST_SCRIPT_TAGS: [harfrust::Script; 157] = [
     harfrust::script::ADLAM,

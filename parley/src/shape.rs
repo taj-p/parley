@@ -9,9 +9,9 @@ use alloc::vec::Vec;
 use super::layout::Layout;
 use super::resolve::{RangedStyle, ResolveContext, Resolved};
 use super::style::{Brush, FontFeature, FontVariation};
-use crate::{swash_convert, Font};
 use crate::inline_box::InlineBox;
 use crate::util::nearly_eq;
+use crate::{Font, swash_convert};
 
 use fontique::{self, Query, QueryFamily, QueryFont};
 use harfrust;
@@ -98,7 +98,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     let mut inline_box_iter = inline_boxes.iter().enumerate();
     let mut current_box = inline_box_iter.next();
 
-    // Iterate over characters in the text (same as original)
+    // Iterate over characters in the text
     for ((char_index, (byte_index, ch)), (info, style_index)) in
         text.char_indices().enumerate().zip(infos)
     {
@@ -127,10 +127,15 @@ pub(crate) fn shape_text<'a, B: Brush>(
         }
 
         // Check if there is an inline box at this index
+        // Note:
+        //   - We loop because there may be multiple boxes at this index
+        //   - We do this *before* processing the text run because we need to know whether we should
+        //     break the run due to the presence of an inline box.
         while let Some((box_idx, inline_box)) = current_box {
             if inline_box.index == byte_index {
                 break_run = true;
                 scx.deferred_boxes.push(box_idx);
+                // Update the current box to the next box
                 current_box = inline_box_iter.next();
             } else {
                 break;
@@ -183,7 +188,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
         );
     }
 
-    // Process any remaining inline boxes
+    // Process any remaining inline boxes whose index is greater than the length of the text
     if let Some((box_idx, _inline_box)) = current_box {
         layout.data.push_inline_box(box_idx);
     }
