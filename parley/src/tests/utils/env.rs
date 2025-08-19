@@ -243,16 +243,9 @@ impl TestEnv {
         }
     }
 
-    fn check_images(
-        &self,
-        current_img: &Pixmap,
-        snapshot_path: &Path,
-    ) -> Result<(), (String, Option<Pixmap>)> {
+    fn check_images(&self, current_img: &Pixmap, snapshot_path: &Path) -> Result<(), String> {
         if !snapshot_path.is_file() {
-            return Err((
-                format!("Cannot find snapshot {}", snapshot_path.display()),
-                None,
-            ));
+            return Err(format!("Cannot find snapshot {}", snapshot_path.display()));
         }
         let snapshot_img = match Pixmap::load_png(snapshot_path) {
             Ok(snapshot_img) => snapshot_img,
@@ -260,29 +253,23 @@ impl TestEnv {
                 if std::env::var("PARLEY_IGNORE_DECODING_ERRORS").is_ok() {
                     return Ok(());
                 }
-                return Err((
-                    format!(
-                        "Loading snapshot {} failed due to decoding error {d}.\n\
+                return Err(format!(
+                    "Loading snapshot {} failed due to decoding error {d}.\n\
                     If this file is an LFS file, install git lfs (https://git-lfs.com/) and run `git lfs pull`.\n\
                     If that fails (due to e.g. a lack of bandwidth), rerun tests with `PARLEY_IGNORE_DECODING_ERRORS=1` to skip this test.",
-                        snapshot_path.display()
-                    ),
-                    None,
-                ));
+                    snapshot_path.display()
+                ))?;
             }
         };
         if snapshot_img.width() != current_img.width()
             || snapshot_img.height() != current_img.height()
         {
-            return Err((
-                format!(
-                    "Snapshot has different size: snapshot {}x{}; generated image: {}x{}",
-                    snapshot_img.width(),
-                    snapshot_img.height(),
-                    current_img.width(),
-                    current_img.height()
-                ),
-                Some(snapshot_img),
+            return Err(format!(
+                "Snapshot has different size: snapshot {}x{}; generated image: {}x{}",
+                snapshot_img.width(),
+                snapshot_img.height(),
+                current_img.width(),
+                current_img.height()
             ));
         }
 
@@ -298,49 +285,11 @@ impl TestEnv {
             color_cumulative_difference += diff_r.max(diff_g).max(diff_b);
         }
         if color_cumulative_difference > self.tolerance {
-            return Err((
-                format!(
-                    "Testing image differs in {n_different_pixels} pixels (color difference = {color_cumulative_difference})",
-                ),
-                Some(snapshot_img),
+            return Err(format!(
+                "Testing image differs in {n_different_pixels} pixels (color difference = {color_cumulative_difference})",
             ));
         }
         Ok(())
-    }
-
-    fn create_diff_image(&self, current_img: &Pixmap, snapshot_img: &Pixmap) -> Pixmap {
-        let width = current_img.width();
-        let height = current_img.height();
-        let mut diff_img = Pixmap::new(width, height).unwrap();
-
-        // Create a visual diff where different pixels are highlighted
-        for (i, (current_pixel, snapshot_pixel)) in current_img
-            .pixels()
-            .iter()
-            .zip(snapshot_img.pixels())
-            .enumerate()
-        {
-            let diff_pixel = if current_pixel == snapshot_pixel {
-                // Same pixels are shown in grayscale
-                let gray = (current_pixel.red() as u16
-                    + current_pixel.green() as u16
-                    + current_pixel.blue() as u16)
-                    / 3;
-                tiny_skia::PremultipliedColorU8::from_rgba(
-                    gray as u8,
-                    gray as u8,
-                    gray as u8,
-                    current_pixel.alpha(),
-                )
-                .unwrap()
-            } else {
-                // Different pixels are highlighted in red
-                tiny_skia::PremultipliedColorU8::from_rgba(255, 0, 0, 255).unwrap()
-            };
-            diff_img.pixels_mut()[i] = diff_pixel;
-        }
-
-        diff_img
     }
 
     pub(crate) fn with_name(&mut self, test_case_name: &str) -> &mut Self {
@@ -374,28 +323,13 @@ impl TestEnv {
 
         let snapshot_path = snapshot_dir().join(&image_name);
         let comparison_path = current_imgs_dir().join(&image_name);
-        current_img.save_png(&comparison_path).unwrap();
 
-        if let Err((error_msg, snapshot_img_opt)) = self.check_images(&current_img, &snapshot_path)
-        {
+        if let Err(e) = self.check_images(&current_img, &snapshot_path) {
             if is_accept_mode() {
                 current_img.save_png(&snapshot_path).unwrap();
             } else {
                 current_img.save_png(&comparison_path).unwrap();
-
-                // Generate diff image if we have a snapshot to compare against
-                if let Some(snapshot_img) = snapshot_img_opt {
-                    if snapshot_img.width() == current_img.width()
-                        && snapshot_img.height() == current_img.height()
-                    {
-                        let diff_img = self.create_diff_image(&current_img, &snapshot_img);
-                        let diff_name = image_name.replace(".png", "_diff.png");
-                        let diff_path = current_imgs_dir().join(&diff_name);
-                        diff_img.save_png(&diff_path).unwrap();
-                    }
-                }
-
-                self.errors.push((comparison_path, error_msg));
+                self.errors.push((comparison_path, e));
             }
         } else if is_generate_all_mode() {
             current_img.save_png(&comparison_path).unwrap();
