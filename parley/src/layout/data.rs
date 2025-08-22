@@ -656,12 +656,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     if to_whitespace(cluster_start_char.1) == Whitespace::Space {
                         break;
                     }
-                    // Iterate in correct (LTR or RTL) order
-                    let char_info_ = if cluster_id < glyph_info.cluster {
-                        &char_infos[(cluster_id + i) as usize]
-                    } else {
-                        &char_infos[(cluster_id - 1) as usize]
-                    };
+                    let char_info_ = &char_infos[(cluster_id + i) as usize];
 
                     push_cluster(
                         clusters,
@@ -739,12 +734,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 if to_whitespace(char.1) == Whitespace::Space {
                     break;
                 }
-                // Iterate in correct (LTR or RTL) order
-                let component_char_info = if cluster_start_char.0 < char.0 {
-                    &char_infos[(cluster_id + i) as usize]
-                } else {
-                    &char_infos[(cluster_id - i) as usize]
-                };
+                let component_char_info = &char_infos[(cluster_id + i) as usize];
 
                 push_cluster(
                     clusters,
