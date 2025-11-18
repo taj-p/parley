@@ -8,6 +8,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_properties::props::{GeneralCategory, GraphemeClusterBreak, Script};
 use zerofrom::ZeroFrom;
@@ -15,6 +18,8 @@ use zerofrom::ZeroFrom;
 /// Baked data for the `CompositePropsV1` data provider.
 #[cfg(feature = "baked")]
 pub mod generated;
+
+mod packtab;
 
 /// A data provider of `CompositePropsV1`.
 #[derive(Clone, Debug, Eq, PartialEq, yoke::Yokeable, ZeroFrom)]
@@ -66,6 +71,13 @@ impl CompositePropsV1Data<'_> {
     pub fn properties(&self, ch: u32) -> Properties {
         Properties(self.trie.get32(ch))
     }
+}
+
+/// Returns the composite properties stored in the PackTab tables.
+#[inline(always)]
+pub fn packtab_properties(ch: u32) -> Properties {
+    debug_assert!(ch <= 0x10_FFFF, "Invalid scalar value: {ch:#X}");
+    Properties(packtab::composite_props_get(ch as usize))
 }
 
 impl unicode_bidi::BidiDataSource for CompositePropsV1Data<'_> {
@@ -255,6 +267,35 @@ impl Properties {
 impl From<Properties> for u32 {
     fn from(value: Properties) -> Self {
         value.0
+    }
+}
+
+#[cfg(all(test, feature = "baked"))]
+mod tests {
+    use super::*;
+    use icu_provider::buf::AsDeserializingBufferProvider;
+    use icu_provider::{DataMarker, DataRequest, DynamicDataProvider};
+
+    #[test]
+    fn packtab_matches_trie() {
+        let provider = icu_provider_blob::BlobDataProvider::try_new_from_static_blob(
+            generated::COMPOSITE_BLOB,
+        )
+        .expect("Composite blob should deserialize");
+        let response: icu_provider::DataResponse<CompositePropsV1> = provider
+            .as_deserializing()
+            .load_data(CompositePropsV1::INFO, DataRequest::default())
+            .expect("Composite data should load");
+        let data = response.payload.get().clone();
+
+        for cp in 0_u32..=0x10_FFFF {
+            let trie_value: u32 = data.properties(cp).into();
+            let packtab_value: u32 = packtab_properties(cp).into();
+            assert_eq!(
+                trie_value, packtab_value,
+                "Mismatch at code point U+{cp:04X}"
+            );
+        }
     }
 }
 

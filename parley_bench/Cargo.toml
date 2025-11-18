@@ -14,6 +14,9 @@ parley = { workspace = true, default-features = true }
 parley_dev = { workspace = true }
 skrifa = { workspace = true }
 tango-bench = "0.6"
+unicode_data = { workspace = true, features = ["baked"] }
+icu_provider = { workspace = true, features = ["sync"] }
+icu_provider_blob = { workspace = true }
 
 [[bench]]
 name = "main"

@@ -5,7 +5,7 @@
 //!
 //! This module provides a benchmark for the default style.
 
-use crate::{ColorBrush, FONT_STACK, get_contexts, get_samples};
+use crate::{ColorBrush, FONT_STACK, get_contexts, get_samples, lookup};
 use parley::{
     Alignment, AlignmentOptions, FontStack, FontStyle, FontWeight, Layout, RangedBuilder,
     StyleProperty,
@@ -128,4 +128,16 @@ pub fn styled() -> Vec<Benchmark> {
             )
         })
         .collect()
+}
+
+/// Benchmark the composite property lookup backends.
+pub fn composite_lookup_latency() -> Vec<Benchmark> {
+    let samples = lookup::codepoint_samples();
+    let composite = lookup::composite_data();
+
+    vec![benchmark_fn("Composite lookup", move |b| {
+        b.iter(|| {
+            black_box(lookup::checksum_packtab(samples));
+        })
+    })]
 }
