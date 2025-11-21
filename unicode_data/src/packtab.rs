@@ -1087,15 +1087,30 @@ pub(crate) static composite_props_u32: [u32; 2868] = [
 
 pub(crate) fn composite_props_get(u: usize) -> u32 {
     if u < 1114112 {
-        composite_props_u32[(((composite_props_u16[3936usize
-            + ((((composite_props_u16[(((composite_props_u8[((((u) >> 1) >> 3) >> 5) as usize])
-                as usize)
-                << 5) as usize
-                + ((((u) >> 1) >> 3) & 31) as usize]) as usize)
-                << 3) as usize
-                + (((u) >> 1) & 7) as usize) as usize]) as usize)
-            << 1) as usize
-            + ((u) & 1) as usize]
+        #[allow(unsafe_code)]
+        unsafe {
+            *(composite_props_u32.get_unchecked(
+                (((unsafe {
+                    *(composite_props_u16.get_unchecked(
+                        3936usize
+                            + ((((unsafe {
+                                *(composite_props_u16.get_unchecked(
+                                    (((unsafe {
+                                        *(composite_props_u8
+                                            .get_unchecked(((((u) >> 1) >> 3) >> 5) as usize))
+                                    }) as usize)
+                                        << 5) as usize
+                                        + ((((u) >> 1) >> 3) & 31) as usize,
+                                ))
+                            }) as usize)
+                                << 3) as usize
+                                + (((u) >> 1) & 7) as usize) as usize,
+                    ))
+                }) as usize)
+                    << 1) as usize
+                    + ((u) & 1) as usize,
+            ))
+        }
     } else {
         2359399
     }
