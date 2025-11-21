@@ -3365,10 +3365,13 @@ dependencies = [
 name = "parley_bench"
 version = "0.0.0"
 dependencies = [
+ "icu_provider",
+ "icu_provider_blob",
  "parley",
  "parley_dev",
  "skrifa 0.37.0",
  "tango-bench",
+ "unicode_data",
 ]
 
 [[package]]
@@ -4736,6 +4739,7 @@ dependencies = [
  "icu_locale",
  "icu_properties",
  "icu_provider",
+ "icu_provider_blob",
  "serde",
  "unicode-bidi",
  "yoke",

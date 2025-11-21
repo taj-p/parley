@@ -5,7 +5,7 @@
 
 use tango_bench::{tango_benchmarks, tango_main};
 
-use parley_bench::benches::{defaults, styled};
+use parley_bench::benches::{composite_lookup_latency, defaults, styled};
 
-tango_benchmarks!(defaults(), styled());
+tango_benchmarks!(defaults(), styled(), composite_lookup_latency());
 tango_main!();

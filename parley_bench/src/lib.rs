@@ -17,6 +17,7 @@ use parley::{
 };
 
 pub mod benches;
+pub mod lookup;
 
 /// A color brush.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
