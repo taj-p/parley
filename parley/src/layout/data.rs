@@ -9,6 +9,7 @@ use crate::{FontData, LineHeight, OverflowWrap, TextWrapMode};
 use core::ops::Range;
 
 use alloc::vec::Vec;
+use skrifa::raw::types::Fixed;
 
 use crate::analysis::cluster::Whitespace;
 use crate::analysis::{Boundary, CharInfo};
@@ -452,7 +453,7 @@ impl<B: Brush> LayoutData<B> {
             return;
         }
         let glyph_positions = glyph_buffer.glyph_positions();
-        let scale_factor = font_size / units_per_em;
+        let scale_factor = FixedScaleFactor::new(font_size, units_per_em);
         let cluster_range_start = self.clusters.len();
         let is_rtl = bidi_level & 1 == 1;
         if !is_rtl {
@@ -620,7 +621,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     direction: Direction,
     clusters: &mut Vec<ClusterData>,
     glyphs: &mut Vec<Glyph>,
-    scale_factor: f32,
+    scale_factor: FixedScaleFactor,
     glyph_infos: &[harfrust::GlyphInfo],
     glyph_positions: &[harfrust::GlyphPosition],
     char_infos: &[(CharInfo, u16)],
@@ -633,8 +634,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     let start_cluster_id = glyph_infos.first().unwrap().cluster;
     let mut cluster_id = start_cluster_id;
     let mut char_info = char_infos[cluster_id as usize];
-    let mut run_advance = 0.0;
-    let mut cluster_advance = 0.0;
+    let mut run_advance: f64 = 0.0;
+    let mut cluster_advance: f64 = 0.0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
     // pushing the first glyph to `glyphs` because it might be inlined into `ClusterData`.
     let mut pending_inline_glyph: Option<Glyph> = None;
@@ -680,7 +681,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         if cluster_id != glyph_info.cluster {
             run_advance += cluster_advance;
             let num_components = num_components(glyph_info.cluster, cluster_id, last_cluster_id);
-            cluster_advance /= num_components as f32;
+            cluster_advance /= num_components as f64;
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
             let cluster_type = if num_components > 1 {
                 debug_assert!(!is_newline);
@@ -747,14 +748,15 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             pending_inline_glyph = None;
         }
 
+        let glyph_advance = scale_factor.apply(glyph_pos.x_advance);
         let glyph = Glyph {
             id: glyph_info.glyph_id,
             style_index: char_info.1,
-            x: (glyph_pos.x_offset as f32) * scale_factor,
-            y: (glyph_pos.y_offset as f32) * scale_factor,
-            advance: (glyph_pos.x_advance as f32) * scale_factor,
+            x: scale_factor.apply(glyph_pos.x_offset).to_f32(),
+            y: scale_factor.apply(glyph_pos.y_offset).to_f32(),
+            advance: glyph_advance.to_f32(),
         };
-        cluster_advance += glyph.advance;
+        cluster_advance += glyph_advance.to_f64();
         // Push any pending glyph. If it was a zero-offset, single glyph cluster, it would
         // have been pushed in the first `if` block.
         if let Some(pending) = pending_inline_glyph.take() {
@@ -785,7 +787,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 glyphs.push(pending);
                 total_glyphs += 1;
             }
-            let ligature_advance = cluster_advance / num_components as f32;
+            let ligature_advance = cluster_advance / num_components as f64;
             push_cluster(
                 clusters,
                 char_info,
@@ -857,7 +859,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         }
     }
 
-    run_advance
+    run_advance as f32
 }
 
 #[derive(PartialEq)]
@@ -888,7 +890,7 @@ fn push_cluster(
     char_info: (CharInfo, u16),
     cluster_start_char: (usize, char),
     glyph_offset: u32,
-    advance: f32,
+    advance: f64,
     total_glyphs: u32,
     cluster_type: ClusterType,
     inline_glyph_id: Option<u32>,
@@ -926,6 +928,40 @@ fn push_cluster(
         text_len: cluster_start_char.1.len_utf8() as u8,
         glyph_offset: final_glyph_offset,
         text_offset: cluster_start_char.0 as u16,
-        advance: final_advance,
+        advance: final_advance as f32,
     });
+}
+
+/// Fixed-point scale factor matching Skrifa/FreeType behavior for font unit scaling for working
+/// with advances and glyph positioning.
+#[derive(Copy, Clone)]
+struct FixedScaleFactor(Fixed);
+
+impl FixedScaleFactor {
+    /// Creates a new scale factor for the given font size and units per em.
+    /// Uses the same fixed-point formula as Skrifa (and FreeType).
+    /// See: https://github.com/googlefonts/fontations/blob/3e7992152b983b8a028309c3b0dca1385aa46246/skrifa/src/instance.rs#L52-L71
+    fn new(font_size: f32, units_per_em: f32) -> Self {
+        let upem = units_per_em as u16;
+        if upem > 0 {
+            Self(Fixed::from_bits((font_size * 64.) as i32) / Fixed::from_bits(upem as i32))
+        } else {
+            // Identity scale for the pattern `mul_div(value, scale, 64)`
+            Self(Fixed::from_bits(0x10000 * 64))
+        }
+    }
+
+    /// Applies the scale factor to a font unit value, returning pixels.
+    /// Uses the same mul_div formula as Skrifa (and FreeType).
+    ///
+    /// See:
+    ///  - FreeType: https://gitlab.freedesktop.org/freetype/freetype/-/blob/80a507a6b8e3d2906ad2c8ba69329bd2fb2a85ef/src/base/ftadvanc.c#L50
+    ///  - Skrifa:
+    ///     - Implementation : https://github.com/googlefonts/fontations/blob/3e7992152b983b8a028309c3b0dca1385aa46246/skrifa/src/metrics.rs#L401
+    ///     - Scaling advance: https://github.com/googlefonts/fontations/blob/3e7992152b983b8a028309c3b0dca1385aa46246/skrifa/src/metrics.rs#L310
+    #[inline(always)]
+    fn apply(self, value: i32) -> Fixed {
+        self.0
+            .mul_div(Fixed::from_bits(value), Fixed::from_bits(64))
+    }
 }
