@@ -15,7 +15,7 @@ use super::style::{Brush, FontFeature, FontVariation};
 use crate::inline_box::InlineBox;
 use crate::lru_cache::LruCache;
 use crate::util::nearly_eq;
-use crate::{Font, swash_convert};
+use crate::{FontData, swash_convert};
 
 use fontique::{self, Query, QueryFamily, QueryFont};
 use swash::text::cluster::{CharCluster, CharInfo, Token};
@@ -390,7 +390,7 @@ fn shape_item<'a, B: Brush>(
 
         // Push harfrust-shaped run for the entire segment
         layout.data.push_run(
-            Font::new(font.font.blob.clone(), font.font.index),
+            FontData::new(font.font.blob.clone(), font.font.index),
             item.size,
             font.font.synthesis,
             &glyph_buffer,
@@ -516,21 +516,23 @@ impl<'a, 'b, B: Brush> FontSelector<'a, 'b, B> {
         }
         let mut selected_font = None;
         self.query.matches_with(|font| {
-            use skrifa::MetadataProvider;
             use swash::text::cluster::Status as MapStatus;
 
-            let Ok(font_ref) = skrifa::FontRef::from_index(font.blob.as_ref(), font.index) else {
+            let Some(charmap) = font.charmap() else {
                 return fontique::QueryStatus::Continue;
             };
 
-            let charmap = font_ref.charmap();
             let map_status = cluster.map(|ch| {
                 charmap
                     .map(ch)
                     .map(|g| {
-                        g.to_u32()
-                            .try_into()
-                            .expect("Swash requires u16 glyph, so we hope that the glyph fits")
+                        // HACK: in reality, we're only using swash to compute
+                        // coverage so we only care about whether the font
+                        // has a mapping for a particular glyph. Any non-zero
+                        // value indicates the existence of a glyph so we can
+                        // simplify this without a fallible conversion from u32
+                        // to u16.
+                        (g != 0) as u16
                     })
                     .unwrap_or_default()
             });

@@ -292,6 +292,33 @@ fn overflow_alignment_rtl() {
 }
 
 #[test]
+fn issue_409_justified_text() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text_one_line = "One line justified.\n";
+    let text_last_line_one_word = "The last word of this text falls on the last line.\n";
+    let text_last_line_three_words = "Three words of this text will end up on the last line.\n";
+    let paragraphs = r#"A sentence across two lines.
+
+And another sentence that breaks across, hopefully, three lines.
+
+And, finally, yet another sentence."#;
+
+    for (text, test_case_name) in [
+        (text_one_line, "one_line"),
+        (text_last_line_one_word, "last_line_one_word"),
+        (text_last_line_three_words, "last_line_three_words"),
+        (paragraphs, "paragraphs"),
+    ] {
+        let builder = env.ranged_builder(text);
+        let mut layout = builder.build(text);
+        layout.break_all_lines(Some(150.0));
+        layout.align(None, Alignment::Justify, AlignmentOptions::default());
+        env.with_name(test_case_name).check_layout_snapshot(&layout);
+    }
+}
+
+#[test]
 fn content_widths() {
     let mut env = TestEnv::new(test_name!(), None);
 
@@ -711,4 +738,124 @@ fn realign_all() {
 fn layout_impl_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Layout<()>>();
+}
+
+#[test]
+fn break_by_lengths_simple() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    // "Hello" = 5 clusters, " " = 1 cluster, "World" = 5 clusters
+    let text = "Hello World";
+    let builder = env.ranged_builder(text);
+    let mut layout = builder.build(text);
+
+    // Break into: "Hello" (5 chars), " World" (6 chars)
+    layout.break_by_lengths(&[5, 6]);
+
+    // Verify we have 2 lines
+    assert_eq!(layout.len(), 2, "Expected 2 lines");
+
+    // Verify line 0 has text range 0..5 ("Hello")
+    let line0 = layout.get(0).unwrap();
+    assert_eq!(
+        line0.text_range(),
+        0..5,
+        "Line 0 should have text range 0..5, got {:?}",
+        line0.text_range()
+    );
+
+    // Verify line 1 has text range 5..11 (" World")
+    let line1 = layout.get(1).unwrap();
+    assert_eq!(
+        line1.text_range(),
+        5..11,
+        "Line 1 should have text range 5..11, got {:?}",
+        line1.text_range()
+    );
+}
+
+#[test]
+fn break_by_lengths_three_lines() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "ABCDEFGHIJ"; // 10 clusters
+    let builder = env.ranged_builder(text);
+    let mut layout = builder.build(text);
+
+    // Break into: "ABC" (3), "DEFG" (4), "HIJ" (3)
+    layout.break_by_lengths(&[3, 4, 3]);
+
+    assert_eq!(layout.len(), 3, "Expected 3 lines");
+
+    assert_eq!(layout.get(0).unwrap().text_range(), 0..3);
+    assert_eq!(layout.get(1).unwrap().text_range(), 3..7);
+    assert_eq!(layout.get(2).unwrap().text_range(), 7..10);
+}
+
+#[test]
+fn break_by_lengths_remaining_on_last() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text = "ABCDEFGHIJ"; // 10 clusters
+    let builder = env.ranged_builder(text);
+    let mut layout = builder.build(text);
+
+    // Only specify first line - remaining clusters should go on line 2
+    layout.break_by_lengths(&[3]);
+
+    assert_eq!(layout.len(), 2, "Expected 2 lines");
+
+    assert_eq!(layout.get(0).unwrap().text_range(), 0..3);
+    assert_eq!(layout.get(1).unwrap().text_range(), 3..10);
+}
+
+#[test]
+fn break_by_lengths_with_newlines() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    // "ww\n\nww" = "ww" (2) + "\n" (1) + "\n" (1) + "ww" (2) = 6 clusters
+    let text = "ww\n\nww";
+    let builder = env.ranged_builder(text);
+    let mut layout = builder.build(text);
+
+    // Break into 3 lines: "ww\n" (3 clusters), "\n" (1 cluster), "ww" (2 clusters)
+    layout.break_by_lengths(&[3, 1, 2]);
+
+    assert_eq!(layout.len(), 3, "Expected 3 lines");
+
+    let line0 = layout.get(0).unwrap();
+    let line1 = layout.get(1).unwrap();
+    let line2 = layout.get(2).unwrap();
+
+    assert_eq!(line0.text_range(), 0..3, "Line 0 should be 'ww\\n'");
+    assert_eq!(line1.text_range(), 3..4, "Line 1 should be '\\n'");
+    assert_eq!(line2.text_range(), 4..6, "Line 2 should be 'ww'");
+}
+
+#[test]
+fn break_by_lengths_with_newlines_extra_length() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    // "ww\n\nww" = "ww" (2) + "\n" (1) + "\n" (1) + "ww" (2) = 6 clusters
+    // User's case: lengths [3, 1, 3] - third line requests 3 but only 2 remain
+    let text = "ww\n\nww";
+    let builder = env.ranged_builder(text);
+    let mut layout = builder.build(text);
+
+    layout.break_by_lengths(&[3, 1, 3]);
+
+    assert_eq!(layout.len(), 3, "Expected 3 lines");
+
+    let line0 = layout.get(0).unwrap();
+    let line1 = layout.get(1).unwrap();
+    let line2 = layout.get(2).unwrap();
+
+    assert_eq!(line0.text_range(), 0..3, "Line 0 should be 'ww\\n'");
+    assert_eq!(line1.text_range(), 3..4, "Line 1 should be '\\n'");
+    // Line 2 should still get both remaining 'w' characters even though we requested 3
+    assert_eq!(line2.text_range(), 4..6, "Line 2 should be 'ww'");
+
+    // Check cluster counts
+    let line2_cluster_count: usize = line2.runs().map(|r| r.clusters().count()).sum();
+    assert_eq!(line2_cluster_count, 2, "Line 2 should have 2 clusters");
 }

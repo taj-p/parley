@@ -11,6 +11,7 @@ use swash::text::cluster::Whitespace;
 use core_maths::CoreFloat;
 
 use crate::OverflowWrap;
+use crate::layout::data::RunData;
 use crate::layout::{
     Boundary, BreakReason, Layout, LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData,
     LineMetrics, Run,
@@ -882,6 +883,394 @@ fn try_commit_line<B: Brush>(
     };
 
     true
+}
+
+/// Breaks lines by cluster (character) counts.
+///
+/// Each element in `lengths` specifies the number of clusters for that line.
+/// For example, `[2, 5]` means the first line has 2 clusters and the second has 5.
+/// Any remaining clusters after the specified lengths are placed on an additional line.
+pub(crate) fn break_by_lengths<B: Brush>(layout: &mut LayoutData<B>, lengths: &[u32]) {
+    layout.width = 0.;
+    layout.height = 0.;
+    layout.lines.clear();
+    layout.line_items.clear();
+
+    let mut length_iter = lengths.iter().copied().peekable();
+    let mut target_clusters = length_iter.next().unwrap_or(u32::MAX);
+    let mut clusters_on_line: u32 = 0;
+    let mut line_advance: f32 = 0.;
+
+    // Track the start indices for the current line
+    let mut line_item_start: usize = 0;
+    let mut line_cluster_start: usize = 0;
+
+    let item_count = layout.items.len();
+    let mut item_idx = 0;
+
+    while item_idx < item_count {
+        let item = &layout.items[item_idx];
+
+        match item.kind {
+            LayoutItemKind::InlineBox => {
+                let inline_box = &layout.inline_boxes[item.index];
+
+                // Add inline box to current line (doesn't count toward cluster count)
+                layout.line_items.push(LineItemData {
+                    kind: LayoutItemKind::InlineBox,
+                    index: item.index,
+                    bidi_level: item.bidi_level,
+                    advance: inline_box.width,
+                    is_whitespace: false,
+                    has_trailing_whitespace: false,
+                    cluster_range: 0..0,
+                    text_range: 0..0,
+                });
+                line_advance += inline_box.width;
+                item_idx += 1;
+            }
+            LayoutItemKind::TextRun => {
+                let run_data = &layout.runs[item.index];
+                let run_cluster_start = run_data.cluster_range.start;
+                let run_cluster_end = run_data.cluster_range.end;
+
+                // Start a new line item for this run (or continue an existing one if we're resuming)
+                let mut line_item_cluster_start = line_cluster_start.max(run_cluster_start);
+                let mut line_item_cluster_end = line_item_cluster_start;
+                let mut line_item_advance: f32 = 0.;
+
+                // Process clusters in this run
+                let mut cluster_idx = line_item_cluster_start;
+                while cluster_idx < run_cluster_end {
+                    let cluster = &layout.clusters[cluster_idx];
+                    let cluster_advance = cluster.advance;
+
+                    // Check if this cluster would exceed the target
+                    if clusters_on_line >= target_clusters && clusters_on_line > 0 {
+                        // Commit the current line item (if it has clusters)
+                        if line_item_cluster_end > line_item_cluster_start {
+                            let run = &layout.runs[item.index];
+                            let text_range = compute_text_range(
+                                layout,
+                                run,
+                                line_item_cluster_start,
+                                line_item_cluster_end,
+                            );
+                            layout.line_items.push(LineItemData {
+                                kind: LayoutItemKind::TextRun,
+                                index: item.index,
+                                bidi_level: run_data.bidi_level,
+                                advance: line_item_advance,
+                                is_whitespace: false,
+                                has_trailing_whitespace: false,
+                                cluster_range: line_item_cluster_start..line_item_cluster_end,
+                                text_range,
+                            });
+                        }
+
+                        // Commit the line
+                        let line_item_end = layout.line_items.len();
+                        layout.lines.push(LineData {
+                            item_range: line_item_start..line_item_end,
+                            max_advance: f32::MAX,
+                            break_reason: BreakReason::Regular,
+                            num_spaces: 0,
+                            metrics: LineMetrics {
+                                advance: line_advance,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        });
+
+                        // Reset for next line
+                        line_item_start = line_item_end;
+                        line_cluster_start = cluster_idx;
+                        line_advance = 0.;
+                        clusters_on_line = 0;
+                        target_clusters = length_iter.next().unwrap_or(u32::MAX);
+
+                        // Start a new line item for the remaining clusters in this run
+                        line_item_cluster_start = cluster_idx;
+                        line_item_cluster_end = cluster_idx;
+                        line_item_advance = 0.;
+                    }
+
+                    // Add cluster to current line item
+                    line_item_cluster_end = cluster_idx + 1;
+                    line_item_advance += cluster_advance;
+                    line_advance += cluster_advance;
+                    clusters_on_line += 1;
+                    cluster_idx += 1;
+                }
+
+                // Commit any remaining clusters from this run as a line item
+                if line_item_cluster_end > line_item_cluster_start {
+                    let text_range = compute_text_range(
+                        layout,
+                        run_data,
+                        line_item_cluster_start,
+                        line_item_cluster_end,
+                    );
+                    layout.line_items.push(LineItemData {
+                        kind: LayoutItemKind::TextRun,
+                        index: item.index,
+                        bidi_level: run_data.bidi_level,
+                        advance: line_item_advance,
+                        is_whitespace: false,
+                        has_trailing_whitespace: false,
+                        cluster_range: line_item_cluster_start..line_item_cluster_end,
+                        text_range,
+                    });
+                }
+
+                line_cluster_start = run_cluster_end;
+                item_idx += 1;
+            }
+        }
+    }
+
+    // Commit the final line (if there's any content)
+    let line_item_end = layout.line_items.len();
+    if line_item_end > line_item_start || layout.lines.is_empty() {
+        layout.lines.push(LineData {
+            item_range: line_item_start..line_item_end,
+            max_advance: f32::MAX,
+            break_reason: BreakReason::None,
+            num_spaces: 0,
+            metrics: LineMetrics {
+                advance: line_advance,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+
+    // Compute metrics for all lines
+    compute_line_metrics(layout);
+}
+
+/// Compute the text range for a line item given its cluster range.
+fn compute_text_range<B: Brush>(
+    layout: &LayoutData<B>,
+    run: &RunData,
+    cluster_start: usize,
+    cluster_end: usize,
+) -> Range<usize> {
+    if cluster_start >= cluster_end {
+        return 0..0;
+    }
+
+    let first_cluster = &layout.clusters[cluster_start];
+    let last_cluster = &layout.clusters[cluster_end - 1];
+
+    let start = run.text_range.start + first_cluster.text_offset as usize;
+    let end =
+        run.text_range.start + last_cluster.text_offset as usize + last_cluster.text_len as usize;
+
+    start..end
+}
+
+/// Compute metrics for all lines after line breaking.
+/// This is shared logic extracted from BreakLines::finish().
+fn compute_line_metrics<B: Brush>(layout: &mut LayoutData<B>) {
+    let quantize = layout.quantize;
+
+    // Compute whitespace and trailing whitespace flags for text runs
+    for item in &mut layout.line_items {
+        if item.kind != LayoutItemKind::TextRun {
+            continue;
+        }
+
+        let run = item;
+        run.is_whitespace = true;
+        if run.bidi_level & 1 != 0 {
+            // RTL runs check for "trailing" whitespace at the front.
+            for cluster in layout.clusters[run.cluster_range.clone()].iter() {
+                if cluster.info.is_whitespace() {
+                    run.has_trailing_whitespace = true;
+                } else {
+                    run.is_whitespace = false;
+                    break;
+                }
+            }
+        } else {
+            for cluster in layout.clusters[run.cluster_range.clone()].iter().rev() {
+                if cluster.info.is_whitespace() {
+                    run.has_trailing_whitespace = true;
+                } else {
+                    run.is_whitespace = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Pre-compute line heights and advances for all line items to avoid borrow conflicts
+    let line_item_data: Vec<(f32, f32)> = layout
+        .line_items
+        .iter()
+        .map(|line_item| {
+            let line_height = line_item.compute_line_height(layout);
+            let advance: f32 = if line_item.kind == LayoutItemKind::TextRun {
+                layout.clusters[line_item.cluster_range.clone()]
+                    .iter()
+                    .map(|c| c.advance)
+                    .sum()
+            } else {
+                line_item.advance
+            };
+            (line_height, advance)
+        })
+        .collect();
+
+    // Update line item advances
+    for (i, item) in layout.line_items.iter_mut().enumerate() {
+        if item.kind == LayoutItemKind::TextRun {
+            item.advance = line_item_data[i].1;
+        }
+    }
+
+    let is_rtl = layout.base_level & 1 != 0;
+    let mut y: f64 = 0.;
+    let mut prev_line_metrics = None;
+
+    for line in &mut layout.lines {
+        // Reset metrics for line
+        line.metrics.ascent = 0.;
+        line.metrics.descent = 0.;
+        line.metrics.leading = 0.;
+        line.metrics.offset = 0.;
+        line.text_range.start = usize::MAX;
+
+        if line.item_range.is_empty() {
+            line.text_range = layout.text_len..layout.text_len;
+        }
+
+        // Compute metrics for the line, but ignore trailing whitespace.
+        let mut have_metrics = false;
+        let mut needs_reorder = false;
+
+        for item_idx in line.item_range.clone().rev() {
+            let line_item = &layout.line_items[item_idx];
+            let (line_height, _) = line_item_data[item_idx];
+
+            match line_item.kind {
+                LayoutItemKind::InlineBox => {
+                    let item = &layout.inline_boxes[line_item.index];
+                    line.metrics.ascent = line.metrics.ascent.max(item.height);
+                    line.metrics.line_height = line.metrics.line_height.max(item.height);
+                    have_metrics = true;
+                }
+                LayoutItemKind::TextRun => {
+                    line.text_range.end = line.text_range.end.max(line_item.text_range.end);
+                    line.text_range.start = line.text_range.start.min(line_item.text_range.start);
+
+                    if line_item.bidi_level != 0 {
+                        needs_reorder = true;
+                    }
+
+                    let run = &layout.runs[line_item.index];
+                    line.metrics.line_height = line.metrics.line_height.max(line_height);
+
+                    if !have_metrics && line_item.is_whitespace {
+                        continue;
+                    }
+
+                    line.metrics.ascent = line.metrics.ascent.max(run.metrics.ascent);
+                    line.metrics.descent = line.metrics.descent.max(run.metrics.descent);
+                    have_metrics = true;
+                }
+            }
+        }
+
+        // Reorder the items within the line (if required)
+        let item_count = line.item_range.end - line.item_range.start;
+        if needs_reorder && item_count > 1 {
+            reorder_line_items(&mut layout.line_items[line.item_range.clone()]);
+        }
+
+        // Compute size of line's trailing whitespace
+        let run = if is_rtl {
+            layout.line_items[line.item_range.clone()].first()
+        } else {
+            layout.line_items[line.item_range.clone()].last()
+        };
+        line.metrics.trailing_whitespace = run
+            .filter(|item| item.is_text_run())
+            .and_then(|run| {
+                let cluster = if is_rtl {
+                    layout.clusters[run.cluster_range.clone()].first()
+                } else {
+                    layout.clusters[run.cluster_range.clone()].last()
+                };
+                cluster
+                    .filter(|cluster| cluster.info.whitespace().is_space_or_nbsp())
+                    .map(|cluster| cluster.advance)
+            })
+            .unwrap_or(0.0);
+
+        if !have_metrics {
+            if !line.item_range.is_empty() {
+                let line_item = &layout.line_items[line.item_range.start];
+                if line_item.is_text_run() {
+                    let run = &layout.runs[line_item.index];
+                    line.metrics.ascent = run.metrics.ascent;
+                    line.metrics.descent = run.metrics.descent;
+                }
+            } else if let Some(metrics) = prev_line_metrics {
+                line.metrics = metrics;
+            }
+        }
+
+        line.metrics.leading =
+            line.metrics.line_height - (line.metrics.ascent + line.metrics.descent);
+
+        let (ascent, descent) = if quantize {
+            (line.metrics.ascent.round(), line.metrics.descent.round())
+        } else {
+            (line.metrics.ascent, line.metrics.descent)
+        };
+
+        let (leading_above, leading_below) = if quantize {
+            let leading = line.metrics.line_height - (ascent + descent);
+            let above = (leading * 0.5).floor();
+            let below = leading.round() - above;
+            (above, below)
+        } else {
+            (line.metrics.leading * 0.5, line.metrics.leading * 0.5)
+        };
+
+        line.metrics.baseline =
+            ascent + leading_above + if quantize { y.round() as f32 } else { y as f32 };
+
+        line.metrics.min_coord = line.metrics.baseline - ascent - leading_above.max(0.);
+        line.metrics.max_coord = line.metrics.baseline + descent + leading_below.max(0.);
+
+        y += line.metrics.line_height as f64;
+        prev_line_metrics = Some(line.metrics);
+    }
+
+    // Compute overall width and height
+    let mut width = 0_f32;
+    let mut full_width = 0_f32;
+    let mut height = 0_f64;
+    for line in &layout.lines {
+        width = width.max(line.metrics.advance - line.metrics.trailing_whitespace);
+        full_width = full_width.max(line.metrics.advance);
+        height += line.metrics.line_height as f64;
+    }
+
+    layout.width = width;
+    layout.full_width = full_width;
+    layout.height = height as f32;
+
+    // Handle empty layout case
+    if layout.text_len == 0 {
+        if let Some(line) = layout.line_items.first_mut() {
+            line.text_range = 0..0;
+            line.cluster_range = 0..0;
+        }
+    }
 }
 
 /// Reorder items within line according to the bidi levels of the items
