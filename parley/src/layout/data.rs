@@ -5,13 +5,13 @@ use crate::inline_box::InlineBox;
 use crate::layout::{ContentWidths, Glyph, LineMetrics, RunMetrics, Style};
 use crate::style::Brush;
 use crate::util::nearly_zero;
-use crate::{Font, OverflowWrap};
+use crate::{FontData, LineHeight, OverflowWrap, TextWrapMode};
 use core::ops::Range;
-
-use swash::text::cluster::{Boundary, Whitespace};
 
 use alloc::vec::Vec;
 
+use crate::analysis::cluster::Whitespace;
+use crate::analysis::{Boundary, CharInfo};
 #[cfg(feature = "libm")]
 #[allow(unused_imports)]
 use core_maths::CoreFloat;
@@ -40,20 +40,18 @@ pub(crate) struct ClusterData {
 impl ClusterData {
     pub(crate) const LIGATURE_START: u16 = 1;
     pub(crate) const LIGATURE_COMPONENT: u16 = 2;
-    pub(crate) const DIVERGENT_STYLES: u16 = 4;
 
+    #[inline(always)]
     pub(crate) fn is_ligature_start(self) -> bool {
         self.flags & Self::LIGATURE_START != 0
     }
 
+    #[inline(always)]
     pub(crate) fn is_ligature_component(self) -> bool {
         self.flags & Self::LIGATURE_COMPONENT != 0
     }
 
-    pub(crate) fn has_divergent_styles(self) -> bool {
-        self.flags & Self::DIVERGENT_STYLES != 0
-    }
-
+    #[inline(always)]
     pub(crate) fn text_range(self, run: &RunData) -> Range<usize> {
         let start = run.text_range.start + self.text_offset as usize;
         start..start + self.text_len as usize
@@ -75,33 +73,33 @@ impl ClusterInfo {
     }
 
     // Returns the boundary type of the cluster.
-    pub(crate) fn boundary(&self) -> Boundary {
+    pub(crate) fn boundary(self) -> Boundary {
         self.boundary
     }
 
     // Returns the whitespace type of the cluster.
-    pub(crate) fn whitespace(&self) -> Whitespace {
+    pub(crate) fn whitespace(self) -> Whitespace {
         to_whitespace(self.source_char)
     }
 
     /// Returns if the cluster is a line boundary.
-    pub(crate) fn is_boundary(&self) -> bool {
+    pub(crate) fn is_boundary(self) -> bool {
         self.boundary != Boundary::None
     }
 
     /// Returns if the cluster is an emoji.
-    pub(crate) fn is_emoji(&self) -> bool {
+    pub(crate) fn is_emoji(self) -> bool {
         // TODO: Defer to ICU4X properties (see: https://docs.rs/icu/latest/icu/properties/props/struct.Emoji.html).
         matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
     }
 
     /// Returns if the cluster is any whitespace.
-    pub(crate) fn is_whitespace(&self) -> bool {
+    pub(crate) fn is_whitespace(self) -> bool {
         self.source_char.is_whitespace()
     }
 
     #[cfg(test)]
-    pub(crate) fn source_char(&self) -> char {
+    pub(crate) fn source_char(self) -> char {
         self.source_char
     }
 }
@@ -205,33 +203,42 @@ impl LineItemData {
         self.kind == LayoutItemKind::TextRun
     }
 
-    pub(crate) fn compute_line_height<B: Brush>(&self, layout: &LayoutData<B>) -> f32 {
-        match self.kind {
-            LayoutItemKind::TextRun => {
-                let mut line_height = 0_f32;
-                let run = &layout.runs[self.index];
-                let glyph_start = run.glyph_start;
-                for cluster in &layout.clusters[run.cluster_range.clone()] {
-                    if cluster.glyph_len != 0xFF && cluster.has_divergent_styles() {
-                        let start = glyph_start + cluster.glyph_offset as usize;
-                        let end = start + cluster.glyph_len as usize;
-                        for glyph in &layout.glyphs[start..end] {
-                            line_height = line_height
-                                .max(layout.styles[glyph.style_index()].line_height.resolve(run));
-                        }
-                    } else {
-                        line_height = line_height.max(
-                            layout.styles[cluster.style_index as usize]
-                                .line_height
-                                .resolve(run),
-                        );
-                    }
+    #[inline(always)]
+    pub(crate) fn is_rtl(&self) -> bool {
+        self.bidi_level & 1 != 0
+    }
+
+    /// If the item is a text run
+    ///   - Determine if it consists entirely of whitespace (`is_whitespace` property)
+    ///   - Determine if it has trailing whitespace (`has_trailing_whitespace` property)
+    pub(crate) fn compute_whitespace_properties<B: Brush>(&mut self, layout_data: &LayoutData<B>) {
+        // Skip items which are not text runs
+        if self.kind != LayoutItemKind::TextRun {
+            return;
+        }
+
+        self.is_whitespace = true;
+        if self.is_rtl() {
+            // RTL runs check for "trailing" whitespace at the front.
+            for cluster in layout_data.clusters[self.cluster_range.clone()].iter() {
+                if cluster.info.is_whitespace() {
+                    self.has_trailing_whitespace = true;
+                } else {
+                    self.is_whitespace = false;
+                    break;
                 }
-                line_height
             }
-            LayoutItemKind::InlineBox => {
-                // TODO: account for vertical alignment (e.g. baseline alignment)
-                layout.inline_boxes[self.index].height
+        } else {
+            for cluster in layout_data.clusters[self.cluster_range.clone()]
+                .iter()
+                .rev()
+            {
+                if cluster.info.is_whitespace() {
+                    self.has_trailing_whitespace = true;
+                } else {
+                    self.is_whitespace = false;
+                    break;
+                }
             }
         }
     }
@@ -257,13 +264,12 @@ pub(crate) struct LayoutItem {
 pub(crate) struct LayoutData<B: Brush> {
     pub(crate) scale: f32,
     pub(crate) quantize: bool,
-    pub(crate) has_bidi: bool,
     pub(crate) base_level: u8,
     pub(crate) text_len: usize,
     pub(crate) width: f32,
     pub(crate) full_width: f32,
     pub(crate) height: f32,
-    pub(crate) fonts: Vec<Font>,
+    pub(crate) fonts: Vec<FontData>,
     pub(crate) coords: Vec<i16>,
 
     // Input (/ output of style resolution)
@@ -292,7 +298,6 @@ impl<B: Brush> Default for LayoutData<B> {
         Self {
             scale: 1.,
             quantize: true,
-            has_bidi: false,
             base_level: 0,
             text_len: 0,
             width: 0.,
@@ -318,7 +323,6 @@ impl<B: Brush> LayoutData<B> {
     pub(crate) fn clear(&mut self) {
         self.scale = 1.;
         self.quantize = true;
-        self.has_bidi = false;
         self.base_level = 0;
         self.text_len = 0;
         self.width = 0.;
@@ -351,16 +355,17 @@ impl<B: Brush> LayoutData<B> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_run(
         &mut self,
-        font: Font,
+        font: FontData,
         font_size: f32,
         synthesis: fontique::Synthesis,
         glyph_buffer: &harfrust::GlyphBuffer,
         bidi_level: u8,
+        style_index: u16,
         word_spacing: f32,
         letter_spacing: f32,
         source_text: &str,
-        char_infos: &[(swash::text::cluster::CharInfo, u16)], // From text analysis
-        text_range: Range<usize>,                             // The text range this run covers
+        char_infos: &[(CharInfo, u16)], // From text analysis
+        text_range: Range<usize>,       // The text range this run covers
         coords: &[harfrust::NormalizedCoord],
     ) {
         let coords_start = self.coords.len();
@@ -400,6 +405,16 @@ impl<B: Brush> LayoutData<B> {
                     (metrics.ascent / 2.0, units_per_em / 18.0)
                 };
 
+            // Compute line height
+            let style = &self.styles[style_index as usize];
+            let line_height = match style.line_height {
+                LineHeight::Absolute(value) => value,
+                LineHeight::FontSizeRelative(value) => value * font_size,
+                LineHeight::MetricsRelative(value) => {
+                    (metrics.ascent - metrics.descent + metrics.leading) * value
+                }
+            };
+
             RunMetrics {
                 ascent: metrics.ascent,
                 descent: -metrics.descent,
@@ -408,6 +423,7 @@ impl<B: Brush> LayoutData<B> {
                 underline_size,
                 strikethrough_offset,
                 strikethrough_size,
+                line_height,
             }
         };
 
@@ -516,14 +532,15 @@ impl<B: Brush> LayoutData<B> {
         let mut min_width = 0.0_f32;
         let mut max_width = 0.0_f32;
 
+        let mut running_min_width = 0.0;
         let mut running_max_width = 0.0;
+        let mut text_wrap_mode = TextWrapMode::Wrap;
         let mut prev_cluster: Option<&ClusterData> = None;
         let is_rtl = self.base_level & 1 == 1;
         for item in &self.items {
             match item.kind {
                 LayoutItemKind::TextRun => {
                     let run = &self.runs[item.index];
-                    let mut running_min_width = 0.0;
                     let clusters = &self.clusters[run.cluster_range.clone()];
                     if is_rtl {
                         prev_cluster = clusters.first();
@@ -531,8 +548,12 @@ impl<B: Brush> LayoutData<B> {
                     for cluster in clusters {
                         let boundary = cluster.info.boundary();
                         let style = &self.styles[cluster.style_index as usize];
-                        if matches!(boundary, Boundary::Line | Boundary::Mandatory)
-                            || style.overflow_wrap == OverflowWrap::Anywhere
+                        let prev_text_wrap_mode = text_wrap_mode;
+                        text_wrap_mode = style.text_wrap_mode;
+                        if boundary == Boundary::Mandatory
+                            || (prev_text_wrap_mode == TextWrapMode::Wrap
+                                && (boundary == Boundary::Line
+                                    || style.overflow_wrap == OverflowWrap::Anywhere))
                         {
                             let trailing_whitespace = whitespace_advance(prev_cluster);
                             min_width = min_width.max(running_min_width - trailing_whitespace);
@@ -552,14 +573,24 @@ impl<B: Brush> LayoutData<B> {
                 }
                 LayoutItemKind::InlineBox => {
                     let ibox = &self.inline_boxes[item.index];
-                    min_width = min_width.max(ibox.width);
                     running_max_width += ibox.width;
+                    if text_wrap_mode == TextWrapMode::Wrap {
+                        let trailing_whitespace = whitespace_advance(prev_cluster);
+                        min_width = min_width.max(running_min_width - trailing_whitespace);
+                        min_width = min_width.max(ibox.width);
+                        running_min_width = 0.0;
+                    } else {
+                        running_min_width += ibox.width;
+                    }
                     prev_cluster = None;
                 }
             }
             let trailing_whitespace = whitespace_advance(prev_cluster);
             max_width = max_width.max(running_max_width - trailing_whitespace);
         }
+
+        let trailing_whitespace = whitespace_advance(prev_cluster);
+        min_width = min_width.max(running_min_width - trailing_whitespace);
 
         ContentWidths {
             min: min_width,
@@ -592,7 +623,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     scale_factor: f32,
     glyph_infos: &[harfrust::GlyphInfo],
     glyph_positions: &[harfrust::GlyphPosition],
-    char_infos: &[(swash::text::cluster::CharInfo, u16)],
+    char_infos: &[(CharInfo, u16)],
     char_indices_iter: I,
 ) -> f32 {
     let mut char_indices_iter = char_indices_iter.peekable();
@@ -601,7 +632,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     let mut cluster_glyph_offset: u32 = 0;
     let start_cluster_id = glyph_infos.first().unwrap().cluster;
     let mut cluster_id = start_cluster_id;
-    let mut char_info = &char_infos[cluster_id as usize];
+    let mut char_info = char_infos[cluster_id as usize];
     let mut run_advance = 0.0;
     let mut cluster_advance = 0.0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
@@ -692,8 +723,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                         break;
                     }
                     let char_info_ = match direction {
-                        Direction::Ltr => &char_infos[(cluster_id + i) as usize],
-                        Direction::Rtl => &char_infos[(cluster_id + num_components - i) as usize],
+                        Direction::Ltr => char_infos[(cluster_id + i) as usize],
+                        Direction::Rtl => char_infos[(cluster_id + num_components - i) as usize],
                     };
                     push_cluster(
                         clusters,
@@ -712,7 +743,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             cluster_advance = 0.0;
             last_cluster_id = cluster_id;
             cluster_id = glyph_info.cluster;
-            char_info = &char_infos[cluster_id as usize];
+            char_info = char_infos[cluster_id as usize];
             pending_inline_glyph = None;
         }
 
@@ -775,8 +806,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                     break;
                 }
                 let component_char_info = match direction {
-                    Direction::Ltr => &char_infos[(cluster_id + i) as usize],
-                    Direction::Rtl => &char_infos[(cluster_id + num_components - i) as usize],
+                    Direction::Ltr => char_infos[(cluster_id + i) as usize],
+                    Direction::Rtl => char_infos[(cluster_id + num_components - i) as usize],
                 };
                 push_cluster(
                     clusters,
@@ -854,7 +885,7 @@ impl From<&ClusterType> for u16 {
 
 fn push_cluster(
     clusters: &mut Vec<ClusterData>,
-    char_info: &(swash::text::cluster::CharInfo, u16),
+    char_info: (CharInfo, u16),
     cluster_start_char: (usize, char),
     glyph_offset: u32,
     advance: f32,
@@ -888,7 +919,7 @@ fn push_cluster(
     };
 
     clusters.push(ClusterData {
-        info: ClusterInfo::new(char_info.0.boundary(), cluster_start_char.1),
+        info: ClusterInfo::new(char_info.0.boundary, cluster_start_char.1),
         flags: (&cluster_type).into(),
         style_index: char_info.1,
         glyph_len: final_glyph_len,
