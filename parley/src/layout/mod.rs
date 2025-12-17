@@ -170,6 +170,19 @@ impl<B: Brush> Layout<B> {
             .break_remaining(max_advance.unwrap_or(f32::MAX));
     }
 
+    /// Breaks lines by cluster (character) counts.
+    ///
+    /// Each element in `lengths` specifies the number of clusters for that line.
+    /// For example, `[2, 5]` means the first line has 2 clusters and the second has 5.
+    /// Any remaining clusters after the specified lengths are placed on an additional line.
+    ///
+    /// Note: Inline boxes are included in the output but do not count toward the
+    /// cluster counts.
+    pub fn break_by_lengths(&mut self, lengths: &[u32]) {
+        unjustify(&mut self.data);
+        line::greedy::break_by_lengths(&mut self.data, lengths);
+    }
+
     /// Apply alignment to the layout relative to the specified container width or full layout
     /// width.
     ///
