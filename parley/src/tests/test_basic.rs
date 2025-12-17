@@ -828,6 +828,60 @@ fn spacing_changes_per_style_run() {
 }
 
 #[test]
+fn letter_spacing() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    // Single line
+    {
+        let text = "Hello World";
+        let mut builder = env.ranged_builder(text);
+        builder.push(StyleProperty::LetterSpacing(3.0), 0..text.len());
+        let mut layout = builder.build(text);
+        layout.break_all_lines(None);
+        layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+        env.with_name("single_line").check_layout_snapshot(&layout);
+    }
+
+    // Soft-wrapped text
+    {
+        let text = "Hello World Test";
+        let mut builder = env.ranged_builder(text);
+        builder.push(StyleProperty::LetterSpacing(2.0), 0..text.len());
+        let mut layout = builder.build(text);
+        layout.break_all_lines(Some(80.0));
+        layout.align(Some(80.0), Alignment::Start, AlignmentOptions::default());
+
+        env.with_name("soft_wrap").check_layout_snapshot(&layout);
+    }
+
+    // Explicit newlines
+    {
+        let text = "Hello\nWorld\nTest";
+        let mut builder = env.ranged_builder(text);
+        builder.push(StyleProperty::LetterSpacing(3.0), 0..text.len());
+        let mut layout = builder.build(text);
+        layout.break_all_lines(None);
+        layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+        env.with_name("hard_wrap").check_layout_snapshot(&layout);
+    }
+
+    // Trailing space before newline
+    {
+        let text = "Hello \nWorld";
+        let mut builder = env.ranged_builder(text);
+        builder.push(StyleProperty::LetterSpacing(3.0), 0..text.len());
+        let mut layout = builder.build(text);
+        layout.break_all_lines(None);
+        layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+        env.with_name("trailing_space_newline")
+            .check_layout_snapshot(&layout);
+    }
+}
+
+#[test]
 fn layout_impl_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Layout<()>>();

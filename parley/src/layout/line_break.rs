@@ -581,7 +581,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             .map(|run| {
                 fn whitespace_advance<'c, I: Iterator<Item = &'c ClusterData>>(clusters: I) -> f32 {
                     clusters
-                        .take_while(|cluster| cluster.info.whitespace() != Whitespace::None)
+                        // Skip newlines (which have letter spacing but aren't hangable whitespace)
+                        .skip_while(|cluster| cluster.info.whitespace() == Whitespace::Newline)
+                        // Then count consecutive space/nbsp
+                        .take_while(|cluster| cluster.info.whitespace().is_space_or_nbsp())
                         .map(|cluster| cluster.advance)
                         .sum()
                 }
