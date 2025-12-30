@@ -8,6 +8,7 @@ use core::mem;
 use core::ops::RangeInclusive;
 
 use alloc::vec::Vec;
+use skrifa::raw::collections::int_set::Domain;
 
 use super::layout::Layout;
 use super::resolve::{RangedStyle, ResolveContext, Resolved};
@@ -420,7 +421,7 @@ fn variations_iter<'a>(
         .variation_settings()
         .iter()
         .map(|(tag, value)| harfrust::Variation {
-            tag: *tag,
+            tag: harfrust::Tag::from_u32(tag.to_u32()),
             value: *value,
         })
         .chain(

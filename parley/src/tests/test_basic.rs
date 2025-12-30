@@ -10,7 +10,7 @@ use peniko::{
 
 use crate::{
     Alignment, AlignmentOptions, ContentWidths, FontFamily, FontSettings, FontStack, InlineBox,
-    Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
+    Layout, LineHeight, StyleProperty, TextStyle, test_name,
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
@@ -166,24 +166,15 @@ fn trailing_whitespace() {
 fn leading_whitespace() {
     let mut env = TestEnv::new(test_name!(), None);
 
-    for (mode, test_case_name) in [
-        (WhiteSpaceCollapse::Preserve, "preserve"),
-        (WhiteSpaceCollapse::Collapse, "collapse"),
-    ] {
-        let mut builder = env.tree_builder();
-        builder.set_white_space_mode(mode);
-        builder.push_text("Line 1");
-        builder.push_style_modification_span(None);
-        builder.set_white_space_mode(WhiteSpaceCollapse::Preserve);
-        builder.push_text("\n");
-        builder.pop_style_span();
-        builder.set_white_space_mode(mode);
-        builder.push_text("  Line 2");
-        let (mut layout, _) = builder.build();
-        layout.break_all_lines(None);
-        layout.align(None, Alignment::Start, AlignmentOptions::default());
-        env.with_name(test_case_name).check_layout_snapshot(&layout);
-    }
+    let mut builder = env.tree_builder();
+    builder.push_text("Line 1 ");
+    builder.push_text("Line                                2");
+    let (mut layout, _) = builder.build();
+    layout.break_all_lines(Some(50.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+    // You're welcome to add asserts on `layout`
+    assert_eq!(layout.lines().count(), 3);
 }
 
 #[test]

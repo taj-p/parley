@@ -25,7 +25,7 @@ repository = "https://github.com/linebender/parley"
 accesskit = "0.21.0"
 bytemuck = { version = "1.23.0", default-features = false }
 fontique = { version = "0.5.0", default-features = false, path = "fontique" }
-harfrust = { version = "0.2.0", default-features = false }
+harfrust = { path = "../harfrust", default-features = false }
 hashbrown = "0.15.3"
 parley = { version = "0.5.0", default-features = false, path = "parley" }
 parley_dev = { version = "0.0.0", default-features = false, path = "parley_dev" }
