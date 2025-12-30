@@ -10,7 +10,7 @@ use peniko::{
 
 use crate::{
     Alignment, AlignmentOptions, ContentWidths, FontFamily, FontSettings, FontStack, InlineBox,
-    Layout, LineHeight, StyleProperty, TextStyle, WhiteSpaceCollapse, test_name,
+    Layout, LineHeight, StyleProperty, TextStyle, test_name,
 };
 
 use super::utils::{ColorBrush, FONT_STACK, TestEnv, asserts::assert_eq_layout_data_alignments};
@@ -166,24 +166,15 @@ fn trailing_whitespace() {
 fn leading_whitespace() {
     let mut env = TestEnv::new(test_name!(), None);
 
-    for (mode, test_case_name) in [
-        (WhiteSpaceCollapse::Preserve, "preserve"),
-        (WhiteSpaceCollapse::Collapse, "collapse"),
-    ] {
-        let mut builder = env.tree_builder();
-        builder.set_white_space_mode(mode);
-        builder.push_text("Line 1");
-        builder.push_style_modification_span(None);
-        builder.set_white_space_mode(WhiteSpaceCollapse::Preserve);
-        builder.push_text("\n");
-        builder.pop_style_span();
-        builder.set_white_space_mode(mode);
-        builder.push_text("  Line 2");
-        let (mut layout, _) = builder.build();
-        layout.break_all_lines(None);
-        layout.align(None, Alignment::Start, AlignmentOptions::default());
-        env.with_name(test_case_name).check_layout_snapshot(&layout);
-    }
+    let mut builder = env.tree_builder();
+    builder.push_text("Line 1 ");
+    builder.push_text("Line                                2");
+    let (mut layout, _) = builder.build();
+    layout.break_all_lines(Some(50.0));
+    layout.align(None, Alignment::Start, AlignmentOptions::default());
+
+    // You're welcome to add asserts on `layout`
+    assert_eq!(layout.lines().count(), 3);
 }
 
 #[test]
@@ -289,6 +280,33 @@ fn overflow_alignment_rtl() {
     layout.align(Some(10.), Alignment::Center, AlignmentOptions::default());
     env.rendering_config().size = Some(Size::new(10., layout.height().into()));
     env.check_layout_snapshot(&layout);
+}
+
+#[test]
+fn issue_409_justified_text() {
+    let mut env = TestEnv::new(test_name!(), None);
+
+    let text_one_line = "One line justified.\n";
+    let text_last_line_one_word = "The last word of this text falls on the last line.\n";
+    let text_last_line_three_words = "Three words of this text will end up on the last line.\n";
+    let paragraphs = r#"A sentence across two lines.
+
+And another sentence that breaks across, hopefully, three lines.
+
+And, finally, yet another sentence."#;
+
+    for (text, test_case_name) in [
+        (text_one_line, "one_line"),
+        (text_last_line_one_word, "last_line_one_word"),
+        (text_last_line_three_words, "last_line_three_words"),
+        (paragraphs, "paragraphs"),
+    ] {
+        let builder = env.ranged_builder(text);
+        let mut layout = builder.build(text);
+        layout.break_all_lines(Some(150.0));
+        layout.align(None, Alignment::Justify, AlignmentOptions::default());
+        env.with_name(test_case_name).check_layout_snapshot(&layout);
+    }
 }
 
 #[test]

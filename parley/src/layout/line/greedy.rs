@@ -34,7 +34,7 @@ impl LineLayout {
 
 #[derive(Clone, Default)]
 struct LineState {
-    x: f32,
+    x: f64,
     items: Range<usize>,
     clusters: Range<usize>,
     num_spaces: usize,
@@ -69,7 +69,7 @@ struct BreakerState {
 
 impl BreakerState {
     /// Add the cluster(s) currently being evaluated to the current line
-    fn append_cluster_to_line(&mut self, next_x: f32) {
+    fn append_cluster_to_line(&mut self, next_x: f64) {
         self.line.items.end = self.item_idx + 1;
         self.line.clusters.end = self.cluster_idx + 1;
         self.line.x = next_x;
@@ -78,7 +78,7 @@ impl BreakerState {
     }
 
     /// Add inline box to line
-    fn append_inline_box_to_line(&mut self, next_x: f32) {
+    fn append_inline_box_to_line(&mut self, next_x: f64) {
         // self.item_idx += 1;
         self.line.items.end += 1;
         self.line.x = next_x;
@@ -209,13 +209,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                     let inline_box = &self.layout.data.inline_boxes[item.index];
 
                     // Compute the x position of the content being currently processed
-                    let next_x = self.state.line.x + inline_box.width;
+                    let next_x = self.state.line.x + (inline_box.width as f64);
 
                     // println!("BOX next_x: {}", next_x);
 
                     // If the box fits on the current line (or we are at the start of the current line)
                     // then simply move on to the next item
-                    if next_x <= max_advance {
+                    if next_x <= max_advance as f64 {
                         // println!("BOX FITS");
 
                         self.state.item_idx += 1;
@@ -302,7 +302,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         }
 
                         // Compute the x position of the content being currently processed
-                        let next_x = self.state.line.x + advance;
+                        let next_x = self.state.line.x + advance as f64;
 
                         // println!("Cluster {} next_x: {}", self.state.cluster_idx, next_x);
 
@@ -311,7 +311,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // }
 
                         // If that x position does NOT exceed max_advance then we simply add the cluster(s) to the current line
-                        if next_x <= max_advance {
+                        if next_x <= max_advance as f64 {
                             self.state.append_cluster_to_line(next_x);
                             self.state.cluster_idx += 1;
                             if is_space {
@@ -321,13 +321,19 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // Else we line break:
                         else {
                             // Handle case where cluster is space character. Hang overflowing whitespace.
+                            // "Hanging" means we add the space to the line but continue processing
+                            // rather than committing the line. The trailing whitespace is allowed
+                            // to overflow and will be accounted for when we hit a non-space that
+                            // requires a break.
                             if is_space {
                                 self.state.append_cluster_to_line(next_x);
-                                if try_commit_line!(BreakReason::Regular) {
-                                    // TODO: can this be hoisted out of the conditional?
-                                    self.state.cluster_idx += 1;
-                                    return self.start_new_line();
-                                }
+                                self.state.cluster_idx += 1;
+
+                                // if try_commit_line!(BreakReason::Regular) {
+                                //     // TODO: can this be hoisted out of the conditional?
+                                //     self.state.cluster_idx += 1;
+                                //     return self.start_new_line();
+                                // }
                             }
                             // Handle the (common) case where we have previously encountered a line-breaking opportunity in the current line
                             //
@@ -423,7 +429,6 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let quantize = self.layout.data.quantize;
         // For each run (item which is a text run):
         //   - Determine if it consists entirely of whitespace (is_whitespace property)
-        //   - Determine if it has trailing whitespace (has_trailing_whitespace property)
         for item in &mut self.lines.line_items {
             // Skip items which are not text runs
             if item.kind != LayoutItemKind::TextRun {
@@ -857,7 +862,7 @@ fn try_commit_line<B: Brush>(
         break_reason,
         num_spaces,
         metrics: LineMetrics {
-            advance: state.x,
+            advance: state.x as f32,
             ..Default::default()
         },
         ..Default::default()

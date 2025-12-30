@@ -33,6 +33,7 @@ core_maths = { version = "0.1.1", optional = true }
 accesskit = { workspace = true, optional = true }
 hashbrown = { workspace = true }
 harfrust = { workspace = true }
+web-sys = { version = "0.3.74" }
 
 [dev-dependencies]
 parley_dev = { workspace = true }

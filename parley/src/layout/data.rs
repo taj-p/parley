@@ -5,7 +5,7 @@ use crate::inline_box::InlineBox;
 use crate::layout::{ContentWidths, Glyph, LineMetrics, RunMetrics, Style};
 use crate::style::Brush;
 use crate::util::nearly_zero;
-use crate::{Font, OverflowWrap};
+use crate::{FontData, OverflowWrap};
 use core::ops::Range;
 
 use swash::text::cluster::{Boundary, Whitespace};
@@ -263,7 +263,7 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) width: f32,
     pub(crate) full_width: f32,
     pub(crate) height: f32,
-    pub(crate) fonts: Vec<Font>,
+    pub(crate) fonts: Vec<FontData>,
     pub(crate) coords: Vec<i16>,
 
     // Input (/ output of style resolution)
@@ -351,7 +351,7 @@ impl<B: Brush> LayoutData<B> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push_run(
         &mut self,
-        font: Font,
+        font: FontData,
         font_size: f32,
         synthesis: fontique::Synthesis,
         glyph_buffer: &harfrust::GlyphBuffer,
@@ -373,14 +373,23 @@ impl<B: Brush> LayoutData<B> {
             .position(|f| *f == font)
             .unwrap_or_else(|| {
                 let index = self.fonts.len();
-                self.fonts.push(font);
+                self.fonts.push(font.clone());
                 index
             });
 
         let metrics = {
             let font = &self.fonts[font_index];
             let font_ref = skrifa::FontRef::from_index(font.data.as_ref(), font.index).unwrap();
-            skrifa::metrics::Metrics::new(&font_ref, skrifa::prelude::Size::new(font_size), coords)
+            skrifa::metrics::Metrics::new(
+                &font_ref,
+                skrifa::prelude::Size::new(font_size),
+                skrifa::prelude::LocationRef::new(
+                    &coords
+                        .iter()
+                        .map(|c| skrifa::prelude::NormalizedCoord::from_bits(c.to_bits()))
+                        .collect::<Vec<_>>(),
+                ),
+            )
         };
         let units_per_em = metrics.units_per_em as f32;
 
@@ -436,7 +445,10 @@ impl<B: Brush> LayoutData<B> {
             return;
         }
         let glyph_positions = glyph_buffer.glyph_positions();
-        let scale_factor = font_size / units_per_em;
+        // Use f64 floating-point scaling for precision.
+        // Note: This produces advances ~0.016% larger than Chrome, likely due to
+        // differences in how Chrome's font pipeline handles the font_size value.
+        let scale_factor = (font_size as f64) / (units_per_em as f64);
         let cluster_range_start = self.clusters.len();
         let is_rtl = bidi_level & 1 == 1;
         if !is_rtl {
@@ -579,7 +591,8 @@ impl<B: Brush> LayoutData<B> {
 ///
 /// ## Input Parameters:
 /// * `direction` - Direction of the text.
-/// * `scale_factor` - Scaling factor used to convert font units to the target size.
+/// * `scale_factor` - f64 scaling factor (font_size / units_per_em) to convert font units to pixels.
+///   Uses floating-point math to match Chrome's precision.
 /// * `glyph_infos` - `HarfRust` glyph information in visual order.
 /// * `glyph_positions` - `HarfRust` glyph positioning data in visual order.
 /// * `char_infos` - Character information from text analysis, indexed by cluster ID.
@@ -589,7 +602,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     direction: Direction,
     clusters: &mut Vec<ClusterData>,
     glyphs: &mut Vec<Glyph>,
-    scale_factor: f32,
+    scale_factor: f64,
     glyph_infos: &[harfrust::GlyphInfo],
     glyph_positions: &[harfrust::GlyphPosition],
     char_infos: &[(swash::text::cluster::CharInfo, u16)],
@@ -602,8 +615,8 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     let start_cluster_id = glyph_infos.first().unwrap().cluster;
     let mut cluster_id = start_cluster_id;
     let mut char_info = &char_infos[cluster_id as usize];
-    let mut run_advance = 0.0;
-    let mut cluster_advance = 0.0;
+    let mut run_advance: f64 = 0.0;
+    let mut cluster_advance: f64 = 0.0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
     // pushing the first glyph to `glyphs` because it might be inlined into `ClusterData`.
     let mut pending_inline_glyph: Option<Glyph> = None;
@@ -649,7 +662,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         if cluster_id != glyph_info.cluster {
             run_advance += cluster_advance;
             let num_components = num_components(glyph_info.cluster, cluster_id, last_cluster_id);
-            cluster_advance /= num_components as f32;
+            cluster_advance /= num_components as f64;
             let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
             let cluster_type = if num_components > 1 {
                 debug_assert!(!is_newline);
@@ -716,14 +729,16 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
             pending_inline_glyph = None;
         }
 
+        let glyph_advance = (glyph_pos.x_advance as f64) * scale_factor;
         let glyph = Glyph {
             id: glyph_info.glyph_id,
             style_index: char_info.1,
-            x: (glyph_pos.x_offset as f32) * scale_factor,
-            y: (glyph_pos.y_offset as f32) * scale_factor,
-            advance: (glyph_pos.x_advance as f32) * scale_factor,
+            x: ((glyph_pos.x_offset as f64) * scale_factor) as f32,
+            y: ((glyph_pos.y_offset as f64) * scale_factor) as f32,
+            advance: glyph_advance as f32,
         };
-        cluster_advance += glyph.advance;
+        cluster_advance += glyph_advance;
+
         // Push any pending glyph. If it was a zero-offset, single glyph cluster, it would
         // have been pushed in the first `if` block.
         if let Some(pending) = pending_inline_glyph.take() {
@@ -754,7 +769,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
                 glyphs.push(pending);
                 total_glyphs += 1;
             }
-            let ligature_advance = cluster_advance / num_components as f32;
+            let ligature_advance = cluster_advance / num_components as f64;
             push_cluster(
                 clusters,
                 char_info,
@@ -826,7 +841,7 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         }
     }
 
-    run_advance
+    run_advance as f32
 }
 
 #[derive(PartialEq)]
@@ -857,7 +872,7 @@ fn push_cluster(
     char_info: &(swash::text::cluster::CharInfo, u16),
     cluster_start_char: (usize, char),
     glyph_offset: u32,
-    advance: f32,
+    advance: f64,
     total_glyphs: u32,
     cluster_type: ClusterType,
     inline_glyph_id: Option<u32>,
@@ -895,6 +910,6 @@ fn push_cluster(
         text_len: cluster_start_char.1.len_utf8() as u8,
         glyph_offset: final_glyph_offset,
         text_offset: cluster_start_char.0 as u16,
-        advance: final_advance,
+        advance: final_advance as f32,
     });
 }
