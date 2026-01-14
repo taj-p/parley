@@ -125,12 +125,23 @@ pub trait GlyphRenderer {
     fn fill_rect(&mut self, rect: Rect);
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct InkSkipDecoration {
+    pub x_start: f32,
+    pub x_end: f32,
+    pub baseline_y: f32,
+    pub offset: f32,
+    pub size: f32,
+    pub buffer: f32,
+}
+
 /// A builder for configuring and drawing glyphs.
 #[derive(Debug)]
 #[must_use = "Methods on the builder don't do anything until `render` is called."]
 pub struct GlyphRunBuilder<'a, T: GlyphRenderer + 'a> {
     run: GlyphRun<'a>,
     renderer: &'a mut T,
+    decoration: Option<InkSkipDecoration>,
 }
 
 impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
@@ -146,6 +157,7 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
                 normalized_coords: &[],
             },
             renderer,
+            decoration: None,
         }
     }
 
@@ -177,33 +189,36 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
         self
     }
 
+    pub fn with_decoration(
+        mut self,
+        x_range: RangeInclusive<f32>,
+        baseline_y: f32,
+        offset: f32,
+        size: f32,
+        buffer: f32,
+    ) -> Self {
+        self.decoration = Some(InkSkipDecoration {
+            x_start: *x_range.start(),
+            x_end: *x_range.end(),
+            baseline_y,
+            offset,
+            size,
+            buffer,
+        });
+        self
+    }
+
     /// Consumes the builder and fills the glyphs with the current configuration.
     pub fn fill_glyphs(self, glyphs: impl Iterator<Item = Glyph>, caches: &mut GlyphCaches) {
-        self.render(
-            glyphs,
-            Style::Fill,
-            &mut caches.outline_cache,
-            &mut caches.hinting_cache,
-        );
+        self.render(glyphs, Style::Fill, caches);
     }
 
     /// Consumes the builder and strokes the glyphs with the current configuration.
     pub fn stroke_glyphs(self, glyphs: impl Iterator<Item = Glyph>, caches: &mut GlyphCaches) {
-        self.render(
-            glyphs,
-            Style::Stroke,
-            &mut caches.outline_cache,
-            &mut caches.hinting_cache,
-        );
+        self.render(glyphs, Style::Stroke, caches);
     }
 
-    fn render(
-        self,
-        glyphs: impl Iterator<Item = Glyph>,
-        style: Style,
-        outline_cache: &mut OutlineCache,
-        hinting_cache: &mut HintCache,
-    ) {
+    fn render(self, glyphs: impl Iterator<Item = Glyph>, style: Style, caches: &mut GlyphCaches) {
         let font_ref =
             FontRef::from_index(self.run.font.data.as_ref(), self.run.font.index).unwrap();
 
@@ -213,19 +228,34 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
         let color_glyphs = font_ref.color_glyphs();
         let bitmaps = font_ref.bitmap_strikes();
 
-        let mut outline_cache_session =
-            OutlineCacheSession::new(outline_cache, VarLookupKey(self.run.normalized_coords));
+        let mut outline_cache_session = OutlineCacheSession::new(
+            &mut caches.outline_cache,
+            VarLookupKey(self.run.normalized_coords),
+        );
         let PreparedGlyphRun {
             transform: initial_transform,
             size,
             normalized_coords,
             hinting_instance,
-        } = prepare_glyph_run(&self.run, &outlines, hinting_cache);
+        } = prepare_glyph_run(&self.run, &outlines, &mut caches.hinting_cache);
 
         let render_glyph = match style {
             Style::Fill => GlyphRenderer::fill_glyph,
             Style::Stroke => GlyphRenderer::stroke_glyph,
         };
+
+        // Precompute values if decoration is configured
+        let decoration_state = self.decoration.map(|dec| {
+            // Transform from font space (Y up) to layout space (Y down), including glyph transform
+            let outline_transform =
+                self.run.glyph_transform.unwrap_or(Affine::IDENTITY) * Affine::FLIP_Y;
+            // Convert offset/size to layout space (Y down)
+            let layout_y0 = f64::from(-dec.offset);
+            let layout_y1 = f64::from(-dec.offset + dec.size);
+            (dec, outline_transform, layout_y0, layout_y1)
+        });
+        // Clear and reuse the exclusions buffer
+        caches.exclusions.clear();
 
         for glyph in glyphs {
             let bitmap_data = bitmaps
@@ -240,6 +270,9 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
                     BitmapData::Bgra(_) => None,
                     BitmapData::Mask(_) => None,
                 });
+
+            // Track outline path for decoration exclusion
+            let mut outline_path_for_decoration: Option<&OutlinePath> = None;
 
             let (glyph_type, transform) =
                 if let Some(color_glyph) = color_glyphs.get(GlyphId::new(glyph.id)) {
@@ -267,7 +300,7 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
                         continue;
                     };
 
-                    prepare_outline_glyph(
+                    let (glyph_type, transform, path) = prepare_outline_glyph(
                         glyph,
                         self.run.font.data.id(),
                         self.run.font.index,
@@ -278,7 +311,9 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
                         &outline,
                         hinting_instance,
                         normalized_coords,
-                    )
+                    );
+                    outline_path_for_decoration = Some(path);
+                    (glyph_type, transform)
                 };
 
             let prepared_glyph = PreparedGlyph {
@@ -287,148 +322,31 @@ impl<'a, T: GlyphRenderer + 'a> GlyphRunBuilder<'a, T> {
             };
 
             render_glyph(self.renderer, prepared_glyph);
+
+            if let (Some(path), Some((dec, outline_transform, layout_y0, layout_y1))) =
+                (outline_path_for_decoration, &decoration_state)
+            {
+                collect_decoration_exclusion(
+                    path,
+                    glyph,
+                    dec,
+                    *outline_transform,
+                    *layout_y0,
+                    *layout_y1,
+                    &mut caches.exclusions,
+                );
+            }
         }
-    }
 
-    /// Render a decoration (like an underline) that skips over glyph descenders.
-    ///
-    /// This implements `text-decoration-skip-ink`-like behavior, where the decoration line is interrupted where it
-    /// would overlap with glyph outlines.
-    ///
-    /// The `x_range` specifies the horizontal position of the decoration, and the `offset` and `size` specify its
-    /// vertical position and height (relative to the baseline). The `buffer` specifies how much horizontal space to
-    /// leave around each descender.
-    pub fn render_decoration(
-        mut self,
-        glyphs: impl Iterator<Item = Glyph>,
-        x_range: RangeInclusive<f32>,
-        baseline_y: f32,
-        offset: f32,
-        size: f32,
-        buffer: f32,
-        caches: &mut GlyphCaches,
-    ) {
-        self.decoration_spans(glyphs, x_range, baseline_y, offset, size, buffer, caches)
-            .for_each(|rect| {
-                self.renderer.fill_rect(rect);
-            });
-    }
-
-    fn decoration_spans(
-        &mut self,
-        glyphs: impl Iterator<Item = Glyph>,
-        x_range: RangeInclusive<f32>,
-        baseline_y: f32,
-        offset: f32,
-        size: f32,
-        buffer: f32,
-        caches: &mut GlyphCaches,
-    ) -> impl Iterator<Item = Rect> {
-        let font_ref =
-            FontRef::from_index(self.run.font.data.as_ref(), self.run.font.index).unwrap();
-
-        let outlines = font_ref.outline_glyphs();
-
-        let PreparedGlyphRun {
-            size: font_size,
-            hinting_instance,
-            ..
-        } = prepare_glyph_run(&self.run, &outlines, &mut caches.hinting_cache);
-
-        // The glyph_transform (e.g. skew for fake italics) affects where the outline
-        // points end up. We apply it along with the Y flip to transform from font space
-        // (Y up) to layout space (Y down).
-        let outline_transform =
-            self.run.glyph_transform.unwrap_or(Affine::IDENTITY) * Affine::FLIP_Y;
-
-        // Buffer to add around each exclusion zone
-        let buffer = f64::from(buffer);
-
-        // X range for the decoration line
-        let x0 = f64::from(*x_range.start());
-        let x1 = f64::from(*x_range.end());
-
-        // Convert offset/size to layout space (Y down).
-        // offset is positive above baseline, so negate for layout coordinates.
-        let layout_y0 = f64::from(-offset);
-        let layout_y1 = f64::from(-offset + size);
-
-        // Get a cache session for this font's variation coordinates
-        let var_key = VarLookupKey(self.run.normalized_coords);
-        let mut outline_cache_session =
-            OutlineCacheSession::new(&mut caches.outline_cache, var_key);
-
-        // Collect and merge exclusion zones from all glyphs.
-        let mut exclusions: Vec<(f64, f64)> = Vec::new();
-
-        for glyph in glyphs {
-            // TODO: skip ink for color and bitmap glyphs
-            let Some(outline) = outlines.get(GlyphId::new(glyph.id)) else {
-                continue;
-            };
-
-            let path = outline_cache_session.get_or_insert(
-                glyph.id,
-                self.run.font.data.id(),
-                self.run.font.index,
-                font_size,
-                var_key,
-                &outline,
-                hinting_instance,
+        if let Some((dec, _, layout_y0, layout_y1)) = decoration_state {
+            render_decoration_from_exclusions(
+                self.renderer,
+                &caches.exclusions,
+                &dec,
+                layout_y0,
+                layout_y1,
             );
-
-            // If the glyph's bounding box doesn't intersect the underline at all, we don't need to calculate
-            // intersections. This saves a lot of time, since most glyphs don't have descenders.
-            let transformed_bbox = outline_transform.transform_rect_bbox(path.bbox);
-            if transformed_bbox.y1 < layout_y0 || transformed_bbox.y0 > layout_y1 {
-                continue;
-            }
-
-            let mut rect = Rect {
-                x0: f64::INFINITY,
-                x1: f64::NEG_INFINITY,
-                y0: layout_y0,
-                y1: layout_y1,
-            };
-
-            for seg in path.path.segments() {
-                // Transform the segment to layout space
-                let seg = outline_transform * seg;
-                expand_rect_with_segment(&mut rect, seg, layout_y0..=layout_y1);
-            }
-
-            // Add glyph position and buffer, then clip to decoration x-range
-            let excl_start = (rect.x0 + f64::from(glyph.x) - buffer).max(x0);
-            let excl_end = (rect.x1 + f64::from(glyph.x) + buffer).min(x1);
-
-            // Skip if no valid exclusion (empty intersection or outside x-range)
-            if excl_start >= excl_end {
-                continue;
-            }
-
-            // Insert in sorted order and merge with overlapping ranges
-            insert_and_merge_range(&mut exclusions, excl_start, excl_end);
         }
-
-        // Draw decoration segments, skipping the exclusion zones
-        let y0 = f64::from(baseline_y) + layout_y0;
-        let y1 = f64::from(baseline_y) + layout_y1;
-
-        let mut state = Some((exclusions.into_iter(), x0));
-        core::iter::from_fn(move || {
-            let (iter, current_x) = state.as_mut()?;
-            let Some((excl_start, excl_end)) = iter.next() else {
-                // Draw the trailing rectangle
-                let final_rect = Rect::new(*current_x, y0, x1, y1);
-                state = None;
-                return (final_rect.width() > 0.0).then_some(final_rect);
-            };
-
-            // Draw segment before this exclusion
-            let rect = Rect::new(*current_x, y0, excl_start, y1);
-            *current_x = excl_end;
-            Some(rect)
-        })
     }
 }
 
@@ -516,6 +434,84 @@ fn expand_rect_with_segment(rect: &mut Rect, seg: PathSeg, y_span: RangeInclusiv
     }
 }
 
+/// Collect exclusion zone for a single glyph's outline.
+fn collect_decoration_exclusion(
+    path: &OutlinePath,
+    glyph: Glyph,
+    dec: &InkSkipDecoration,
+    outline_transform: Affine,
+    layout_y0: f64,
+    layout_y1: f64,
+    exclusions: &mut Vec<(f64, f64)>,
+) {
+    let x0 = f64::from(dec.x_start);
+    let x1 = f64::from(dec.x_end);
+    let buffer = f64::from(dec.buffer);
+
+    // Quick reject: if the glyph's bounding box doesn't intersect the underline y-range,
+    // we don't need to calculate intersections.
+    let transformed_bbox = outline_transform.transform_rect_bbox(path.bbox);
+    if transformed_bbox.y1 < layout_y0 || transformed_bbox.y0 > layout_y1 {
+        return;
+    }
+
+    let mut rect = Rect {
+        x0: f64::INFINITY,
+        x1: f64::NEG_INFINITY,
+        y0: layout_y0,
+        y1: layout_y1,
+    };
+
+    for seg in path.path.segments() {
+        // Transform the segment to layout space
+        let seg = outline_transform * seg;
+        expand_rect_with_segment(&mut rect, seg, layout_y0..=layout_y1);
+    }
+
+    // Add glyph position and buffer, then clip to decoration x-range
+    let excl_start = (rect.x0 + f64::from(glyph.x) - buffer).max(x0);
+    let excl_end = (rect.x1 + f64::from(glyph.x) + buffer).min(x1);
+
+    // Skip if no valid exclusion (empty intersection or outside x-range)
+    if excl_start >= excl_end {
+        return;
+    }
+
+    // Insert in sorted order and merge with overlapping ranges
+    insert_and_merge_range(exclusions, excl_start, excl_end);
+}
+
+/// Render decoration segments, skipping the exclusion zones.
+fn render_decoration_from_exclusions<T: GlyphRenderer>(
+    renderer: &mut T,
+    exclusions: &[(f64, f64)],
+    dec: &InkSkipDecoration,
+    layout_y0: f64,
+    layout_y1: f64,
+) {
+    let x0 = f64::from(dec.x_start);
+    let x1 = f64::from(dec.x_end);
+    let y0 = f64::from(dec.baseline_y) + layout_y0;
+    let y1 = f64::from(dec.baseline_y) + layout_y1;
+
+    let mut current_x = x0;
+
+    for &(excl_start, excl_end) in exclusions {
+        // Draw segment before this exclusion
+        let rect = Rect::new(current_x, y0, excl_start, y1);
+        if rect.width() > 0.0 {
+            renderer.fill_rect(rect);
+        }
+        current_x = excl_end;
+    }
+
+    // Draw trailing segment after last exclusion
+    let final_rect = Rect::new(current_x, y0, x1, y1);
+    if final_rect.width() > 0.0 {
+        renderer.fill_rect(final_rect);
+    }
+}
+
 fn prepare_outline_glyph<'a>(
     glyph: Glyph,
     font_id: u64,
@@ -529,7 +525,7 @@ fn prepare_outline_glyph<'a>(
     outline_glyph: &skrifa::outline::OutlineGlyph<'a>,
     hinting_instance: Option<&HintingInstance>,
     normalized_coords: &[skrifa::instance::NormalizedCoord],
-) -> (GlyphType<'a>, Affine) {
+) -> (GlyphType<'a>, Affine, &'a OutlinePath) {
     let path = outline_cache.get_or_insert(
         glyph.id,
         font_id,
@@ -568,6 +564,7 @@ fn prepare_outline_glyph<'a>(
     (
         GlyphType::Outline(OutlineGlyph { path: &path.path }),
         Affine::new(final_transform),
+        path,
     )
 }
 
@@ -929,6 +926,8 @@ pub struct GlyphCaches {
     pub outline_cache: OutlineCache,
     /// Caches hinting instances for reuse.
     pub hinting_cache: HintCache,
+    /// Reusable buffer for decoration exclusion zones.
+    exclusions: Vec<(f64, f64)>,
 }
 
 impl GlyphCaches {
@@ -941,6 +940,7 @@ impl GlyphCaches {
     pub fn clear(&mut self) {
         self.outline_cache.clear();
         self.hinting_cache.clear();
+        self.exclusions.clear();
     }
 
     /// Maintains the glyph caches by evicting unused cache entries.
