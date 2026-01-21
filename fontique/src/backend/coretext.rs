@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use super::{
-    FallbackKey, FamilyId, FamilyInfo, FamilyNameMap, GenericFamily, GenericFamilyMap, scan,
+    FallbackKey, FamilyId, FamilyInfo, FamilyNameMap, GenericFamily, GenericFamilyMap, ScriptExt,
+    scan,
 };
+use alloc::format;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use core::ptr::{null, null_mut};
 use hashbrown::HashMap;
@@ -65,7 +68,7 @@ impl SystemFonts {
     pub(crate) fn fallback(&mut self, key: impl Into<FallbackKey>) -> Option<FamilyId> {
         let key = key.into();
         let sample = key.script().sample()?;
-        let font = create_fallback_font_for_text(sample, key.locale(), false)?;
+        let font = create_fallback_font_for_text(sample, key.locale_str(), false)?;
         let family_name = unsafe { font.family_name() };
         self.name_map.get(&family_name.to_string()).map(|n| n.id())
     }
