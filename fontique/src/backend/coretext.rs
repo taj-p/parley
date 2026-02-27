@@ -114,6 +114,19 @@ fn scan_coretext_available_fonts() -> Option<scan::ScannedCollection> {
         }
     }
 
+    // CoreText may not enumerate all system fonts (e.g. the system UI font SFNS.ttf).
+    // Supplement with the Library/Fonts directories so those fonts are not missed.
+    for dir in NSSearchPathForDirectoriesInDomains(
+        NSSearchPathDirectory::LibraryDirectory,
+        NSSearchPathDomainMask::AllDomainsMask,
+        true,
+    ) {
+        let dir = PathBuf::from(format!("{dir}/Fonts"));
+        if dir.is_dir() {
+            paths.insert(dir);
+        }
+    }
+
     if paths.is_empty() {
         return None;
     }
