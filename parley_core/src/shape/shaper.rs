@@ -293,18 +293,32 @@ fn shape_item(
         let mut buffer = mem::take(&mut scx.unicode_buffer).unwrap();
         buffer.clear();
 
+        // The char index (within the item) of the segment's first char, used to index
+        // `item_char_info` below and to compute the `ShapedRun` char range.
+        let segment_char_start = item_text[..segment_start_offset].chars().count();
+
         // Use the entire segment text including newlines
         buffer.reserve(segment_text.len());
+        let mut grapheme_start = 0_u32;
         #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
         for (i, ch) in segment_text.chars().enumerate() {
-            // Ensure that each cluster's index matches the index into `infos`. This is required
-            // for efficient cluster lookup within `data.rs`.
+            // Each char is pushed with the segment-relative char index of the grapheme cluster
+            // it belongs to as its cluster value. Because `HarfBuzz` only ever merges cluster
+            // values (taking the minimum), this guarantees that:
             //
-            // In other words, instead of using `buffer.push_str`, which iterates `segment_text`
-            // with `char_indices`, push each char individually via `.chars` with a cluster index
-            // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
-            // index in `data.rs`.
-            buffer.add(ch, i as u32);
+            // - every output cluster value is the char index of a grapheme start, so `data.rs`
+            //   can look up `infos` by cluster value, and
+            // - a shaped cluster never splits an extended grapheme cluster, even where
+            //   `HarfBuzz`'s internal grapheme model differs from ICU4X's (e.g. unligated
+            //   regional-indicator pairs or CRLF), because all chars of a grapheme share one
+            //   cluster value going in.
+            //
+            // The segment start is treated as a grapheme start regardless of its flag (an item
+            // boundary never extends a preceding grapheme for shaping purposes).
+            if i == 0 || item_char_info[segment_char_start + i].is_grapheme_start() {
+                grapheme_start = i as u32;
+            }
+            buffer.add(ch, grapheme_start);
         }
 
         buffer.set_direction(direction);
@@ -324,7 +338,7 @@ fn shape_item(
         );
 
         // Extract relevant CharInfo slice for this segment
-        let char_start = char_range.start + item_text[..segment_start_offset].chars().count();
+        let char_start = char_range.start + segment_char_start;
         let segment_char_count = segment_text.chars().count();
 
         shaped_runs(ShapedRun {

@@ -224,35 +224,26 @@ fn style_features_ligatures_rtl_cluster_details() {
         parley::PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,
         parley::PositionedLayoutItem::InlineBox(_) => unreachable!(),
     };
-    let mut last_advance = f32::MAX;
-    glyph_run.run().clusters().enumerate().for_each(|(i, c)| {
-        match i % 4 {
-            // "ح" and "د" are not ligatures.
-            0 | 1 => assert!(!c.is_ligature_start() && !c.is_ligature_continuation()),
-            // "د" is the ligature continuation whose cluster shares the advance with
-            // the ligature start.
+    // "دً" (dal + fathatan) shapes as one harfbuzz cluster; since it is also a single grapheme
+    // cluster it is emitted as one regular cluster, not a ligature split.
+    let clusters: Vec<_> = glyph_run.run().clusters().collect();
+    assert_eq!(clusters.len(), 3);
+    for (i, c) in clusters.iter().enumerate() {
+        assert!(!c.is_ligature_start() && !c.is_ligature_continuation());
+        match i {
+            // "ا" and "ح" are single-char clusters.
+            0 | 1 => assert_eq!(c.text_range().len(), 2),
+            // "دً" is one grapheme cluster covering both codepoints and their glyphs.
             2 => {
-                assert!(c.is_ligature_continuation());
-                assert_eq!(c.glyphs().count(), 0);
-                assert!(c.is_ligature_continuation());
-                assert_eq!(c.text_range().len(), 2);
-                assert_eq!(c.glyphs().count(), 0);
-            }
-            // The last visual character (i.e. the first logical character) is the ligature start.
-            3 => {
-                assert!(c.is_ligature_start());
+                assert_eq!(c.text_range().len(), 4);
                 assert_eq!(c.glyphs().count(), 2);
-                assert_eq!(c.text_range().len(), 2);
-                // The advance should be shared with the previous cluster of the ligature.
-                assert_eq!(c.advance(), last_advance);
-                // This cluster should contain the one glyph of the ligature whose advance
-                // is the sum of the advances of the component clusters.
-                assert_eq!(c.glyphs().nth(1).unwrap().advance, c.advance() * 2.0);
+                // The cluster advance is the sum of its glyphs' advances.
+                let glyph_advance: f32 = c.glyphs().map(|g| g.advance).sum();
+                assert_eq!(c.advance(), glyph_advance);
             }
             _ => unreachable!(),
         }
-        last_advance = c.advance();
-    });
+    }
     env.check_layout_snapshot(&layout);
 }
 

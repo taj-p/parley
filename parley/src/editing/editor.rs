@@ -293,23 +293,11 @@ where
                 .logical_clusters(&self.editor.layout)[0]
                 .clone()
             {
+                // Delete the whole upstream cluster. Clusters are grapheme clusters, so this
+                // deletes exactly one user-perceived character (a combining sequence, emoji
+                // ZWJ sequence, flag, or CRLF pair is removed as a unit).
                 let range = cluster.text_range();
-                let end = range.end;
-                let start = if cluster.is_hard_line_break() || cluster.is_emoji() {
-                    // For newline sequences and emoji, delete the previous cluster
-                    range.start
-                } else {
-                    // Otherwise, delete the previous character
-                    let Some((start, _)) = self
-                        .editor
-                        .buffer
-                        .get(..end)
-                        .and_then(|str| str.char_indices().next_back())
-                    else {
-                        return;
-                    };
-                    start
-                };
+                let (start, end) = (range.start, range.end);
                 self.editor.buffer.replace_range(start..end, "");
                 self.editor.update_compose_for_replaced_range(start..end, 0);
                 self.update_layout();

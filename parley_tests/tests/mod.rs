@@ -28,6 +28,7 @@ mod draw;
 mod editor;
 mod exclusions;
 mod floats;
+mod grapheme_clusters;
 mod issues;
 mod line_break;
 mod linebreaking_matches_chrome;

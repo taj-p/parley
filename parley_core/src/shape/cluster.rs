@@ -13,7 +13,7 @@ use crate::{CharInfo, analysis::AnalysisDataSources};
 pub struct CharCluster {
     chars: Vec<Char>,
     is_emoji: bool,
-    map_len: u8,
+    map_len: u16,
     start: u32,
     end: u32,
     force_normalize: bool,
@@ -283,7 +283,9 @@ impl CharCluster {
 
         let mut force_normalize = false;
         let mut is_emoji_or_pictograph = false;
-        let mut map_len: u8 = 0;
+        // A degenerate grapheme cluster (e.g. hundreds of combining marks on one base) can
+        // exceed 255 chars, so a `u8` would overflow here.
+        let mut map_len: u16 = 0;
         let start = *code_unit_offset_in_string as u32;
 
         for ((_, ch), (info, style_index)) in
@@ -400,7 +402,7 @@ impl Form {
     fn coverage(&self, covers: &impl Fn(char) -> bool) -> f32 {
         Mapper {
             chars: &self.chars[..self.len as usize],
-            map_len: self.map_len,
+            map_len: self.map_len.into(),
             has_contributing: self.has_contributing,
         }
         .coverage(covers)
@@ -409,7 +411,7 @@ impl Form {
 
 struct Mapper<'a> {
     chars: &'a [Char],
-    map_len: u8,
+    map_len: u16,
     has_contributing: bool,
 }
 
@@ -431,6 +433,6 @@ impl<'a> Mapper<'a> {
                 }
             }
         }
-        mapped as f32 / self.map_len as f32
+        mapped as f32 / f32::from(self.map_len)
     }
 }

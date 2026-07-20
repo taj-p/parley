@@ -532,7 +532,13 @@ impl<B: Brush> LayoutData<B> {
     }
 }
 
-/// Processes shaped glyphs from `HarfRust` and converts them into `ClusterData` and `Glyph`.
+/// Maximum number of glyphs a single `ClusterData` can reference.
+///
+/// `ClusterData::glyph_len` is a `u8` and `0xFF` is the inline-glyph sentinel.
+const MAX_CLUSTER_GLYPHS: u32 = 0xFE;
+
+/// Processes shaped glyphs from `HarfRust` and converts them into `ClusterData` and `Glyph`,
+/// emitting one `ClusterData` per extended grapheme cluster.
 ///
 /// # Parameters
 ///
@@ -546,7 +552,7 @@ impl<B: Brush> LayoutData<B> {
 /// * `scale_factor` - Scaling factor used to convert font units to the target size.
 /// * `glyph_infos` - `HarfRust` glyph information in visual order.
 /// * `glyph_positions` - `HarfRust` glyph positioning data in visual order.
-/// * `char_infos` - Character information from text analysis, indexed by cluster ID.
+/// * `char_infos` - Character information from text analysis, indexed by cluster value.
 /// * `char_indices_iter` - Iterator over (`byte_offset`, `char`) pairs from the source text.
 ///   Should be in logical order (forward for LTR, reverse for RTL).
 fn process_clusters<I: Iterator<Item = (usize, char)>>(
@@ -560,14 +566,11 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     char_style_indices: &[u16],
     char_indices_iter: I,
 ) -> f32 {
-    let char_info_at = |i: usize| (char_infos[i], char_style_indices[i]);
-    let mut char_indices_iter = char_indices_iter.peekable();
-    let mut cluster_start_char = char_indices_iter.next().unwrap();
+    let mut char_indices_iter = char_indices_iter;
+    let mut group_start_char = char_indices_iter.next().unwrap();
     let mut total_glyphs: u32 = 0;
     let mut cluster_glyph_offset: u32 = 0;
-    let start_cluster_id = glyph_infos.first().unwrap().cluster;
-    let mut cluster_id = start_cluster_id;
-    let mut char_info = char_info_at(cluster_id as usize);
+    let mut cluster_id = glyph_infos.first().unwrap().cluster;
     let mut run_advance = 0.0;
     let mut cluster_advance = 0.0;
     // If the current cluster might be a single-glyph, zero-offset cluster, we defer
@@ -577,14 +580,17 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     // The mental model for understanding this function is best grasped by first reading
     // the HarfBuzz docs on [clusters](https://harfbuzz.github.io/working-with-harfbuzz-clusters.html).
     //
-    // `num_components` is the number of characters in the current cluster. Since source text's characters
-    // were inserted into `HarfRust`'s buffer using their logical indices as the cluster ID, `HarfRust` will
-    // assign the first character's cluster ID (in logical order) to the merged cluster because the minimum
-    // ID is selected for [merging](https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/buffer.rs#L920-L924).
+    // Each source character was inserted into `HarfRust`'s buffer with the logical (char) index
+    // of the extended grapheme cluster it belongs to as its cluster value (see `shape_item`).
+    // `HarfRust` assigns the minimum value to merged clusters because the minimum
+    // ID is selected for [merging](https://github.com/harfbuzz/harfrust/blob/a38025fb336230b492366740c86021bb406bcd0d/src/hb/buffer.rs#L920-L924),
+    // so every output cluster value is the logical index of a shaped cluster's first character,
+    // and a shaped cluster always covers whole graphemes.
     //
-    //  So, the number of components in a given cluster is dependent on `direction`.
-    //   - In LTR, `num_components` is the difference between the next cluster and the current cluster.
-    //   - In RTL, `num_components` is the difference between the last cluster and the current cluster.
+    // `char_span` is the number of characters in the current shaped cluster, derived from
+    // cluster value deltas. Which neighboring cluster to compare against depends on `direction`:
+    //   - In LTR, `char_span` is the difference between the next cluster and the current cluster.
+    //   - In RTL, `char_span` is the difference between the last cluster and the current cluster.
     // This is because we must compare the current cluster to its next larger ID (in other words, the next
     // logical index, which is visually downstream in LTR and visually upstream in RTL).
     //
@@ -592,19 +598,21 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
     //   Initial cluster values: 0, 1, 2 (logical + visual order)
     //   `HarfRust` assignation: 0, 1, 1
     //   Cluster count:          2
-    //   `num_components`:       (1 - 0 =) 1, (3 - 1 =) 2
+    //   `char_span`:            (1 - 0 =) 1, (3 - 1 =) 2
     //
     // Now consider the RTL text for "حداً".
     //   Initial cluster values:  0, 1, 2, 3 (logical, or in-memory, order)
     //   Reversed cluster values: 3, 2, 1, 0 (visual order - the return order of `HarfRust` for RTL)
     //   `HarfRust` assignation:  3, 2, 0, 0
     //   Cluster count:           3
-    //   `num_components`:        (4 - 3 =) 1, (3 - 2 =) 1, (2 - 0 =) 2
-    let num_components =
-        |next_cluster: u32, current_cluster: u32, last_cluster: u32| match direction {
-            Direction::Ltr => next_cluster - current_cluster,
-            Direction::Rtl => last_cluster - current_cluster,
-        };
+    //   `char_span`:             (4 - 3 =) 1, (3 - 2 =) 1, (2 - 0 =) 2
+    //
+    // (In this example `ا` and `ً` are one grapheme, so the last shaped cluster is emitted as a
+    // single `ClusterData`; only shaped clusters spanning *multiple* graphemes are split.)
+    let char_span = |next_cluster: u32, current_cluster: u32, last_cluster: u32| match direction {
+        Direction::Ltr => next_cluster - current_cluster,
+        Direction::Rtl => last_cluster - current_cluster,
+    };
     let mut last_cluster_id: u32 = match direction {
         Direction::Ltr => 0,
         Direction::Rtl => char_infos.len() as u32,
@@ -614,72 +622,27 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         // Flush previous cluster if we've reached a new cluster
         if cluster_id != glyph_info.cluster {
             run_advance += cluster_advance;
-            let num_components = num_components(glyph_info.cluster, cluster_id, last_cluster_id);
-            cluster_advance /= num_components as f32;
-            let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-            let cluster_type = if num_components > 1 {
-                debug_assert!(!is_newline);
-                ClusterType::LigatureStart
-            } else if is_newline {
-                ClusterType::Newline
-            } else {
-                ClusterType::Regular
-            };
-
-            let inline_glyph_id = if matches!(cluster_type, ClusterType::Regular) {
-                pending_inline_glyph.take().map(|g| g.id)
-            } else {
-                // This isn't a regular cluster, so we don't inline the glyph and push
-                // it to `glyphs`.
-                if let Some(pending) = pending_inline_glyph.take() {
-                    glyphs.push(pending);
-                    total_glyphs += 1;
-                }
-                None
-            };
-
-            push_cluster(
+            let span = char_span(glyph_info.cluster, cluster_id, last_cluster_id);
+            flush_shaped_cluster(
+                direction,
                 clusters,
-                char_info,
-                cluster_start_char,
-                cluster_glyph_offset,
+                glyphs,
+                char_infos,
+                char_style_indices,
+                &mut char_indices_iter,
+                group_start_char,
+                cluster_id,
+                span,
                 cluster_advance,
-                total_glyphs,
-                cluster_type,
-                inline_glyph_id,
+                &mut cluster_glyph_offset,
+                &mut total_glyphs,
+                &mut pending_inline_glyph,
             );
-            cluster_glyph_offset = total_glyphs;
-
-            if num_components > 1 {
-                // Skip characters until we reach the current cluster
-                for i in 1..num_components {
-                    cluster_start_char = char_indices_iter.next().unwrap();
-                    if to_whitespace(cluster_start_char.1) == Whitespace::Space {
-                        break;
-                    }
-                    let char_info_ = match direction {
-                        Direction::Ltr => char_info_at((cluster_id + i) as usize),
-                        Direction::Rtl => char_info_at((cluster_id + num_components - i) as usize),
-                    };
-                    push_cluster(
-                        clusters,
-                        char_info_,
-                        cluster_start_char,
-                        cluster_glyph_offset,
-                        cluster_advance,
-                        total_glyphs,
-                        ClusterType::LigatureComponent,
-                        None,
-                    );
-                }
-            }
-            cluster_start_char = char_indices_iter.next().unwrap();
+            group_start_char = char_indices_iter.next().unwrap();
 
             cluster_advance = 0.0;
             last_cluster_id = cluster_id;
             cluster_id = glyph_info.cluster;
-            char_info = char_info_at(cluster_id as usize);
-            pending_inline_glyph = None;
         }
 
         let glyph = Glyph {
@@ -705,161 +668,379 @@ fn process_clusters<I: Iterator<Item = (usize, char)>>(
         }
     }
 
-    // Push the last cluster
-    {
-        // See comment above `num_components` for why we use `char_infos.len()` for LTR and 0 for RTL.
-        let next_cluster_id = match direction {
-            Direction::Ltr => char_infos.len() as u32,
-            Direction::Rtl => 0,
-        };
-        let num_components = num_components(next_cluster_id, cluster_id, last_cluster_id);
-        if num_components > 1 {
-            // This is a ligature - create ligature start + ligature components
-
-            if let Some(pending) = pending_inline_glyph.take() {
-                glyphs.push(pending);
-                total_glyphs += 1;
-            }
-            let ligature_advance = cluster_advance / num_components as f32;
-            push_cluster(
-                clusters,
-                char_info,
-                cluster_start_char,
-                cluster_glyph_offset,
-                ligature_advance,
-                total_glyphs,
-                ClusterType::LigatureStart,
-                None,
-            );
-
-            cluster_glyph_offset = total_glyphs;
-
-            // Create ligature component clusters for the remaining characters
-            for (i, char) in (1..).zip(char_indices_iter) {
-                if to_whitespace(char.1) == Whitespace::Space {
-                    break;
-                }
-                let component_char_info = match direction {
-                    Direction::Ltr => char_info_at((cluster_id + i) as usize),
-                    Direction::Rtl => char_info_at((cluster_id + num_components - i) as usize),
-                };
-                push_cluster(
-                    clusters,
-                    component_char_info,
-                    char,
-                    cluster_glyph_offset,
-                    ligature_advance,
-                    total_glyphs,
-                    ClusterType::LigatureComponent,
-                    None,
-                );
-            }
-        } else {
-            let is_newline = to_whitespace(cluster_start_char.1) == Whitespace::Newline;
-            let cluster_type = if is_newline {
-                ClusterType::Newline
-            } else {
-                ClusterType::Regular
-            };
-            let mut inline_glyph_id = None;
-            match cluster_type {
-                ClusterType::Regular => {
-                    if total_glyphs == cluster_glyph_offset
-                        && let Some(pending) = pending_inline_glyph.take()
-                    {
-                        inline_glyph_id = Some(pending.id);
-                    }
-                }
-                _ => {
-                    if let Some(pending) = pending_inline_glyph.take() {
-                        glyphs.push(pending);
-                        total_glyphs += 1;
-                    }
-                }
-            }
-            push_cluster(
-                clusters,
-                char_info,
-                cluster_start_char,
-                cluster_glyph_offset,
-                cluster_advance,
-                total_glyphs,
-                cluster_type,
-                inline_glyph_id,
-            );
-        }
+    // Flush the last cluster. See the comment above `char_span` for why the "next" cluster
+    // value is the char count for LTR and 0 for RTL.
+    run_advance += cluster_advance;
+    let next_cluster_id = match direction {
+        Direction::Ltr => char_infos.len() as u32,
+        Direction::Rtl => 0,
+    };
+    let span = char_span(next_cluster_id, cluster_id, last_cluster_id);
+    flush_shaped_cluster(
+        direction,
+        clusters,
+        glyphs,
+        char_infos,
+        char_style_indices,
+        &mut char_indices_iter,
+        group_start_char,
+        cluster_id,
+        span,
+        cluster_advance,
+        &mut cluster_glyph_offset,
+        &mut total_glyphs,
+        &mut pending_inline_glyph,
+    );
+    if cfg!(debug_assertions) {
+        assert!(
+            char_indices_iter.next().is_none(),
+            "cluster values should tile the source text exactly"
+        );
     }
 
     run_advance
 }
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 enum Direction {
     Ltr,
     Rtl,
 }
 
-enum ClusterType {
-    LigatureStart,
-    LigatureComponent,
-    Regular,
-    Newline,
-}
+/// Flushes one shaped cluster (a maximal run of glyphs sharing a cluster value, covering `span`
+/// chars) into one `ClusterData` per extended grapheme cluster.
+///
+/// `group_start_char` is the shaped cluster's first `(byte_offset, char)` in iteration order
+/// (logical order for LTR, reverse-logical for RTL); the remaining `span - 1` chars are consumed
+/// from `char_indices_iter`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors `process_clusters`'s loop state"
+)]
+fn flush_shaped_cluster<I: Iterator<Item = (usize, char)>>(
+    direction: Direction,
+    clusters: &mut Vec<ClusterData>,
+    glyphs: &mut Vec<Glyph>,
+    char_infos: &[CharInfo],
+    char_style_indices: &[u16],
+    char_indices_iter: &mut I,
+    group_start_char: (usize, char),
+    cluster_id: u32,
+    span: u32,
+    cluster_advance: f32,
+    cluster_glyph_offset: &mut u32,
+    total_glyphs: &mut u32,
+    pending_inline_glyph: &mut Option<Glyph>,
+) {
+    let logical_start = cluster_id as usize;
+    let logical_end = logical_start + span as usize;
+    // Input cluster values are grapheme-aligned and `HarfBuzz` only ever merges them (keeping
+    // the minimum), so every shaped cluster begins on a grapheme start — except the segment's
+    // first char, which is treated as a grapheme start even when itemization split a grapheme
+    // across runs (e.g. a style boundary between '\r' and '\n').
+    debug_assert!(logical_start == 0 || char_infos[logical_start].is_grapheme_start());
+    let grapheme_count = 1 + char_infos[logical_start + 1..logical_end]
+        .iter()
+        .filter(|info| info.is_grapheme_start())
+        .count() as u32;
 
-impl From<&ClusterType> for u8 {
-    fn from(cluster_type: &ClusterType) -> Self {
-        match cluster_type {
-            ClusterType::LigatureStart => ClusterData::LIGATURE_START,
-            ClusterType::LigatureComponent => ClusterData::LIGATURE_COMPONENT,
-            ClusterType::Regular | ClusterType::Newline => 0, // No special flags
+    if grapheme_count == 1 {
+        // The shaped cluster covers exactly one grapheme; emit a single cluster.
+        let mut last_char = group_start_char;
+        for _ in 1..span {
+            last_char = char_indices_iter.next().unwrap();
+        }
+        // Chars arrive in logical order for LTR and reverse-logical order for RTL.
+        let (first_char, last_char) = match direction {
+            Direction::Ltr => (group_start_char, last_char),
+            Direction::Rtl => (last_char, group_start_char),
+        };
+        let text_offset = first_char.0;
+        let text_len = last_char.0 + last_char.1.len_utf8() - text_offset;
+        let source_char = first_char.1;
+        let is_emoji = is_emoji(&char_infos[logical_start..logical_end]);
+        let boundary = char_infos[logical_start].boundary;
+        let style_index = char_style_indices[logical_start];
+
+        if to_whitespace(source_char) == Whitespace::Newline {
+            // Newline clusters are stripped of their glyph contribution.
+            if let Some(pending) = pending_inline_glyph.take() {
+                glyphs.push(pending);
+                *total_glyphs += 1;
+            }
+            debug_assert!(
+                matches!(*total_glyphs - *cluster_glyph_offset, 1 | 2),
+                "expected a newline to shape to one glyph (or two for CRLF)"
+            );
+            push_cluster(
+                clusters,
+                boundary,
+                style_index,
+                source_char,
+                is_emoji,
+                text_offset,
+                text_len,
+                0,   // flags
+                0,   // glyph_len
+                0,   // glyph_offset
+                0.0, // advance
+            );
+        } else if let Some(pending) = pending_inline_glyph.take() {
+            // A single zero-offset glyph is stored inline within `ClusterData`.
+            debug_assert_eq!(*total_glyphs, *cluster_glyph_offset);
+            push_cluster(
+                clusters,
+                boundary,
+                style_index,
+                source_char,
+                is_emoji,
+                text_offset,
+                text_len,
+                0,    // flags
+                0xFF, // glyph_len: inline sentinel
+                pending.id,
+                cluster_advance,
+            );
+        } else {
+            let glyph_len = *total_glyphs - *cluster_glyph_offset;
+            debug_assert_ne!(glyph_len, 0);
+            if glyph_len <= MAX_CLUSTER_GLYPHS {
+                push_cluster(
+                    clusters,
+                    boundary,
+                    style_index,
+                    source_char,
+                    is_emoji,
+                    text_offset,
+                    text_len,
+                    0, // flags
+                    glyph_len as u8,
+                    *cluster_glyph_offset,
+                    cluster_advance,
+                );
+            } else {
+                // A degenerate grapheme with more glyphs than `glyph_len` can express (e.g.
+                // hundreds of combining marks on one base). Spill the excess into extra
+                // glyph-carrying `LIGATURE_COMPONENT` pieces with an empty text range at the
+                // grapheme's end, so that every glyph stays attributed to a cluster.
+                //
+                // The shaped cluster's glyphs are the last `glyph_len` entries of `glyphs`
+                // (`pending_inline_glyph` is `None` here as the shaped cluster has more than
+                // one glyph).
+                let group_base = glyphs.len() - glyph_len as usize;
+                let piece_advance = |piece_offset: u32, piece_len: u32| -> f32 {
+                    let base = group_base + piece_offset as usize;
+                    glyphs[base..base + piece_len as usize]
+                        .iter()
+                        .map(|g| g.advance)
+                        .sum()
+                };
+                let main_advance = piece_advance(0, MAX_CLUSTER_GLYPHS);
+                push_cluster(
+                    clusters,
+                    boundary,
+                    style_index,
+                    source_char,
+                    is_emoji,
+                    text_offset,
+                    text_len,
+                    ClusterData::LIGATURE_START,
+                    MAX_CLUSTER_GLYPHS as u8,
+                    *cluster_glyph_offset,
+                    main_advance,
+                );
+                let mut piece_offset = MAX_CLUSTER_GLYPHS;
+                while piece_offset < glyph_len {
+                    let piece_len = (glyph_len - piece_offset).min(MAX_CLUSTER_GLYPHS);
+                    push_cluster(
+                        clusters,
+                        Boundary::None,
+                        style_index,
+                        source_char,
+                        is_emoji,
+                        text_offset + text_len, // empty text range at the grapheme's end
+                        0,
+                        ClusterData::LIGATURE_COMPONENT,
+                        piece_len as u8,
+                        *cluster_glyph_offset + piece_offset,
+                        piece_advance(piece_offset, piece_len),
+                    );
+                    piece_offset += piece_len;
+                }
+            }
+        }
+    } else {
+        // The shaped cluster covers several graphemes (e.g. an "fi" ligature or a conjunct):
+        // split it into one cluster per grapheme with the advance divided evenly. The
+        // logically-first grapheme keeps all the glyphs (`LIGATURE_START`); the others carry
+        // none (`LIGATURE_COMPONENT`).
+        if let Some(pending) = pending_inline_glyph.take() {
+            glyphs.push(pending);
+            *total_glyphs += 1;
+        }
+        let piece_advance = cluster_advance / grapheme_count as f32;
+        // `glyph_len` can't express more than `MAX_CLUSTER_GLYPHS` glyphs; a *ligature* with
+        // that many glyphs is not reachable in practice (unlike a degenerate single grapheme,
+        // which is handled by the spill path above).
+        debug_assert!(*total_glyphs - *cluster_glyph_offset <= MAX_CLUSTER_GLYPHS);
+        let glyph_len = (*total_glyphs - *cluster_glyph_offset).min(MAX_CLUSTER_GLYPHS) as u8;
+        debug_assert_ne!(glyph_len, 0);
+
+        match direction {
+            Direction::Ltr => {
+                // Chars arrive in logical order; a flagged char closes the previous grapheme.
+                let mut piece_first_char = group_start_char;
+                let mut piece_last_char = group_start_char;
+                let mut piece_logical_start = logical_start;
+                for i in 1..span as usize {
+                    let ch = char_indices_iter.next().unwrap();
+                    let logical_i = logical_start + i;
+                    if char_infos[logical_i].is_grapheme_start() {
+                        push_ligature_piece(
+                            clusters,
+                            char_infos,
+                            char_style_indices,
+                            piece_logical_start,
+                            logical_i,
+                            piece_first_char,
+                            piece_last_char,
+                            piece_advance,
+                            (piece_logical_start == logical_start)
+                                .then_some((glyph_len, *cluster_glyph_offset)),
+                        );
+                        piece_first_char = ch;
+                        piece_logical_start = logical_i;
+                    }
+                    piece_last_char = ch;
+                }
+                push_ligature_piece(
+                    clusters,
+                    char_infos,
+                    char_style_indices,
+                    piece_logical_start,
+                    logical_end,
+                    piece_first_char,
+                    piece_last_char,
+                    piece_advance,
+                    (piece_logical_start == logical_start)
+                        .then_some((glyph_len, *cluster_glyph_offset)),
+                );
+            }
+            Direction::Rtl => {
+                // Chars arrive in reverse-logical order; a grapheme is complete once its first
+                // char (flagged as a grapheme start) is consumed. Pieces are therefore pushed
+                // in reverse-logical order, and `push_run`'s slice reversal puts them back in
+                // logical order — leaving the glyph-holding `LIGATURE_START` (pushed last)
+                // logically first, mirroring LTR.
+                let mut piece_last_char = group_start_char;
+                let mut piece_logical_end = logical_end;
+                let mut piece_complete = false;
+                for j in 0..span as usize {
+                    let current = if j == 0 {
+                        group_start_char
+                    } else {
+                        char_indices_iter.next().unwrap()
+                    };
+                    if piece_complete {
+                        piece_last_char = current;
+                        piece_complete = false;
+                    }
+                    let logical_i = logical_end - 1 - j;
+                    if char_infos[logical_i].is_grapheme_start() {
+                        push_ligature_piece(
+                            clusters,
+                            char_infos,
+                            char_style_indices,
+                            logical_i,
+                            piece_logical_end,
+                            current,
+                            piece_last_char,
+                            piece_advance,
+                            (logical_i == logical_start)
+                                .then_some((glyph_len, *cluster_glyph_offset)),
+                        );
+                        piece_logical_end = logical_i;
+                        piece_complete = true;
+                    }
+                }
+                debug_assert!(piece_complete, "every char should belong to a grapheme");
+            }
         }
     }
+
+    *cluster_glyph_offset = *total_glyphs;
 }
 
+/// Pushes one grapheme piece of a shaped cluster that spans multiple graphemes.
+///
+/// `glyph_range` is `Some((glyph_len, glyph_offset))` for the logically-first piece (which keeps
+/// all of the shaped cluster's glyphs) and `None` for the zero-glyph components.
+#[expect(clippy::too_many_arguments, reason = "plain data plumbing")]
+fn push_ligature_piece(
+    clusters: &mut Vec<ClusterData>,
+    char_infos: &[CharInfo],
+    char_style_indices: &[u16],
+    logical_start: usize,
+    logical_end: usize,
+    first_char: (usize, char),
+    last_char: (usize, char),
+    advance: f32,
+    glyph_range: Option<(u8, u32)>,
+) {
+    debug_assert!(
+        to_whitespace(first_char.1) != Whitespace::Newline,
+        "a shaped cluster spanning multiple graphemes should not contain a newline"
+    );
+    let text_offset = first_char.0;
+    let text_len = last_char.0 + last_char.1.len_utf8() - text_offset;
+    let (flags, glyph_len, glyph_offset) = match glyph_range {
+        Some((glyph_len, glyph_offset)) => (ClusterData::LIGATURE_START, glyph_len, glyph_offset),
+        None => (ClusterData::LIGATURE_COMPONENT, 0, 0),
+    };
+    push_cluster(
+        clusters,
+        char_infos[logical_start].boundary,
+        char_style_indices[logical_start],
+        first_char.1,
+        is_emoji(&char_infos[logical_start..logical_end]),
+        text_offset,
+        text_len,
+        flags,
+        glyph_len,
+        glyph_offset,
+        advance,
+    );
+}
+
+/// Whether any char in the range is an emoji, pictograph, or regional indicator.
+fn is_emoji(char_infos: &[CharInfo]) -> bool {
+    char_infos
+        .iter()
+        .any(|info| info.is_emoji_or_pictograph() || info.is_region_indicator())
+}
+
+#[expect(clippy::too_many_arguments, reason = "plain data plumbing")]
 fn push_cluster(
     clusters: &mut Vec<ClusterData>,
-    char_info: (CharInfo, u16),
-    cluster_start_char: (usize, char),
+    boundary: Boundary,
+    style_index: u16,
+    source_char: char,
+    is_emoji: bool,
+    text_offset: usize,
+    text_len: usize,
+    flags: u8,
+    glyph_len: u8,
     glyph_offset: u32,
     advance: f32,
-    total_glyphs: u32,
-    cluster_type: ClusterType,
-    inline_glyph_id: Option<u32>,
 ) {
-    let glyph_len = (total_glyphs - glyph_offset) as u8;
-
-    let (final_glyph_len, final_glyph_offset, final_advance) = match cluster_type {
-        ClusterType::LigatureComponent => {
-            // Ligature components have no glyphs, only advance.
-            debug_assert_eq!(glyph_len, 0);
-            (0_u8, 0_u32, advance)
-        }
-        ClusterType::Newline => {
-            // Newline clusters are stripped of their glyph contribution.
-            debug_assert_eq!(glyph_len, 1);
-            (0_u8, 0_u32, 0.0)
-        }
-        _ if inline_glyph_id.is_some() => {
-            // Inline glyphs are stored inline within `ClusterData`
-            debug_assert_eq!(glyph_len, 0);
-            (0xFF_u8, inline_glyph_id.unwrap(), advance)
-        }
-        ClusterType::Regular | ClusterType::LigatureStart => {
-            // Regular and ligature start clusters maintain their glyphs and advance.
-            debug_assert_ne!(glyph_len, 0);
-            (glyph_len, glyph_offset, advance)
-        }
-    };
-
-    let is_emoji = char_info.0.is_emoji_or_pictograph() || char_info.0.is_region_indicator();
     clusters.push(ClusterData {
-        info: ClusterInfo::new(char_info.0.boundary, cluster_start_char.1, is_emoji),
-        flags: (&cluster_type).into(),
-        style_index: char_info.1,
-        glyph_len: final_glyph_len,
-        text_len: cluster_start_char.1.len_utf8() as u16,
-        glyph_offset: final_glyph_offset,
-        text_offset: cluster_start_char.0 as u16,
-        advance: final_advance,
+        info: ClusterInfo::new(boundary, source_char, is_emoji),
+        flags,
+        style_index,
+        glyph_len,
+        text_len: text_len as u16,
+        glyph_offset,
+        text_offset: text_offset as u16,
+        advance,
     });
 }

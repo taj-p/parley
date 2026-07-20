@@ -24,6 +24,13 @@ This release has an [MSRV] of 1.88.
   Note glyphs overflow these content bounds as well, for example when many combining marks are stacked.
   The union of the line-box and content bounds is close to the old `LineMetrics::block_{min,max}_coord` fields.
 - `parley::editing::Cursor::{previous,next}_logical_word` now land at the previous/next logical start of a word and skip over whitespace. ([#215][] by [@tomcur][])
+- Breaking change: layout clusters are now extended grapheme clusters (UAX #29) instead of per-character shaping clusters ([#700][] by [@taj-p][]).
+  A multi-codepoint grapheme — a combining sequence (`e` + U+0301), emoji ZWJ sequence, regional-indicator flag pair, or CRLF — is now returned as a single `Cluster` whose `text_range` covers the whole sequence. Consequences:
+  - Cursor motion, hit testing, selection, and `PlainEditor` deletion (`delete`, `backdelete`) operate on whole graphemes; byte indices inside a grapheme snap to its start.
+  - `is_ligature_start`/`is_ligature_continuation` are now only reported for shaped clusters spanning several graphemes (e.g. an "fi" ligature), with the advance divided per grapheme rather than per character.
+  - Letter spacing is no longer inserted inside multi-codepoint graphemes.
+  - AccessKit `character_lengths` now describe grapheme clusters, as the AccessKit API expects.
+  - The `#[doc(hidden)]` test helper `Cluster::text_len` now returns `u16`.
 
 ### Fixed
 
@@ -704,6 +711,7 @@ This release has an [MSRV][] of 1.70.
 [#661]: https://github.com/linebender/parley/pull/661
 [#671]: https://github.com/linebender/parley/pull/671
 [#697]: https://github.com/linebender/parley/pull/697
+[#700]: https://github.com/linebender/parley/pull/700
 
 [Unreleased]: https://github.com/linebender/parley/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/linebender/parley/compare/v0.10.0...v0.11.0

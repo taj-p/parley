@@ -726,16 +726,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                             // A CRLF sequence is a single grapheme cluster and must produce
                             // exactly one hard line break (UAX#14: CR × LF, do not break
-                            // between). When this newline is a CR immediately followed by an
-                            // LF, append the CR to the current line but suppress the break
-                            // here and let the LF emit the single break, so CR and LF share
-                            // one line. The lookahead reads the global cluster list so a CRLF
-                            // that shaping split across two runs (e.g. a style boundary at the
-                            // LF) is still coalesced. The LF must be item-adjacent to the CR:
-                            // if it lands in a later run it only coalesces when the next item
-                            // is that run (not an inline box sitting between the two), so an
-                            // inline box at the LF offset keeps the CR's break. Lone CR, lone
-                            // LF, LS, and PS are unaffected.
+                            // between). Within a run, CRLF is stored as one cluster, so this
+                            // lookahead can only match when itemization split the CRLF across
+                            // two runs (e.g. a style boundary at the LF): append the CR to the
+                            // current line but suppress the break here and let the LF emit the
+                            // single break, so CR and LF share one line. The LF must be
+                            // item-adjacent to the CR: if it lands in a later run it only
+                            // coalesces when the next item is that run (not an inline box
+                            // sitting between the two), so an inline box at the LF offset keeps
+                            // the CR's break. Lone CR, lone LF, LS, and PS are unaffected.
                             let lf_is_item_adjacent = self.state.cluster_idx + 1 < cluster_end
                                 || self
                                     .layout
@@ -899,9 +898,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     /// Computes the next line in the paragraph by character count.
     ///
     /// This method breaks lines based on the number of characters rather than advance width.
-    /// Each text cluster (including whitespace and newlines) counts as 1 character.
+    /// Each text cluster — a grapheme cluster, so possibly several codepoints — counts as
+    /// 1 character (including whitespace and newlines).
     /// Each inline box also counts as 1 character.
-    /// Ligature components each count separately (matching character count).
+    /// Grapheme clusters of a ligature (ligature components) each count separately.
     ///
     /// Unlike `break_next`, this method does not respect normal line break opportunities and
     /// will break exactly when the character limit is reached. It does not break on newlines, for example.

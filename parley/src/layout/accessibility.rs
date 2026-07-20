@@ -265,7 +265,13 @@ impl LayoutAccessibility {
                     if cluster.is_word_boundary() && !cluster.is_space_or_nbsp() {
                         word_starts.push(character_lengths.len() as _);
                     }
-                    character_lengths.push(cluster_text.len() as _);
+                    // AccessKit stores character (grapheme cluster) lengths as `u8`; a
+                    // pathological grapheme longer than 255 bytes cannot be represented.
+                    debug_assert!(
+                        cluster_text.len() <= u8::MAX as usize,
+                        "grapheme cluster byte length overflows AccessKit's character length"
+                    );
+                    character_lengths.push(cluster_text.len().min(u8::MAX as usize) as _);
                     character_positions.push(span_advance);
                     character_widths.push(cluster.advance());
                     span_advance += cluster.advance();

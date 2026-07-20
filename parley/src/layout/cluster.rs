@@ -178,11 +178,20 @@ impl<'a, B: Brush> Cluster<'a, B> {
     }
 
     /// Returns `true` if the cluster is the beginning of a ligature.
+    ///
+    /// A ligature here is a shaped cluster spanning several grapheme clusters (e.g. an "fi"
+    /// ligature): its glyphs all belong to the starting cluster, and its advance is divided
+    /// evenly among the start and its continuations. A multi-codepoint grapheme cluster (such
+    /// as an emoji ZWJ sequence or a base with combining marks) is a single regular cluster,
+    /// not a ligature.
     pub fn is_ligature_start(&self) -> bool {
         self.data.is_ligature_start()
     }
 
     /// Returns `true` if the cluster is a ligature continuation.
+    ///
+    /// See [`Self::is_ligature_start`] for what constitutes a ligature. Continuations carry
+    /// no glyphs, only their share of the ligature's advance.
     pub fn is_ligature_continuation(&self) -> bool {
         self.data.is_ligature_component()
     }

@@ -279,10 +279,10 @@ fn break_by_length_with_emoji_only() {
 fn break_by_length_with_multi_codepoint_emoji() {
     let mut env = TestEnv::new(test_name!(), None);
 
-    // Family emoji (ZWJ sequence): 👨‍👩‍👧‍👦 = 7 codepoints
-    // Flag emoji: 🇺🇸 = 2 codepoints
-    // Simple emoji: ✅ = 1 codepoint (in the bundled subset)
-    // Total = 10 clusters
+    // Family emoji (ZWJ sequence): 👨‍👩‍👧‍👦 = 7 codepoints, 1 grapheme cluster
+    // Flag emoji: 🇺🇸 = 2 codepoints, 1 grapheme cluster
+    // Simple emoji: ✅ = 1 codepoint, 1 grapheme cluster
+    // Total = 3 clusters
     let text = "👨‍👩‍👧‍👦🇺🇸✅";
     let mut builder = env.ranged_builder(text);
     builder.push_default(StyleProperty::FontFamily(FontFamily::named(
@@ -290,21 +290,36 @@ fn break_by_length_with_multi_codepoint_emoji() {
     )));
     let mut layout = builder.build(text);
 
-    // Break at visual emoji boundaries: 7 (family), 2 (flag), 1 (simple)
+    // Each emoji is a single grapheme cluster, regardless of its codepoint count
     let mut breaker = layout.break_lines();
-    breaker.break_next_with_length(7); // 👨‍👩‍👧‍👦
-    breaker.break_next_with_length(2); // 🇺🇸
+    breaker.break_next_with_length(1); // 👨‍👩‍👧‍👦
+    breaker.break_next_with_length(1); // 🇺🇸
     breaker.break_next_with_length(1); // ✅
     breaker.finish();
 
     assert_eq!(layout.len(), 3, "Expected 3 lines");
 
-    // Verify cluster counts per line match codepoint counts
+    // Verify each line holds exactly one grapheme cluster
     let clusters_per_line: Vec<usize> = layout
         .lines()
         .map(|line| line.runs().map(|run| run.clusters().count()).sum())
         .collect();
-    assert_eq!(clusters_per_line, vec![7, 2, 1]);
+    assert_eq!(clusters_per_line, vec![1, 1, 1]);
+
+    // Verify each cluster covers the emoji's full codepoint sequence
+    let cluster_text_lens: Vec<usize> = layout
+        .lines()
+        .flat_map(|line| {
+            line.runs()
+                .flat_map(|run| {
+                    run.clusters()
+                        .map(|c| c.text_range().len())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(cluster_text_lens, vec!["👨‍👩‍👧‍👦".len(), "🇺🇸".len(), "✅".len()]);
 }
 
 /// This test verifies that `break_next_with_length` produces the same layout metrics as

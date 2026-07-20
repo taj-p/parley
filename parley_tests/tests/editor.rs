@@ -116,3 +116,52 @@ fn editor_insert_regular_text_set_upstream_affinity() {
     assert_eq!(sel.focus().index(), 2);
     assert_eq!(sel.focus().affinity(), Affinity::Upstream);
 }
+
+/// Backspace deletes exactly one grapheme cluster, however many codepoints it spans.
+#[test]
+fn editor_backdelete_removes_whole_grapheme() {
+    let cases: &[(&str, &str)] = &[
+        // (initial text, text after one backspace from the end)
+        ("ae\u{301}", "a"), // combining sequence
+        ("a👨‍👩‍👧‍👦", "a"),       // emoji ZWJ sequence
+        ("a🇦🇺", "a"),       // regional indicator pair
+        ("a\r\n", "a"),     // CRLF
+        ("ab", "a"),        // plain ASCII
+    ];
+    for (text, expected) in cases {
+        let mut env = TestEnv::new(test_name!(), None);
+        let mut editor = env.editor(text);
+        let mut drv = env.driver(&mut editor);
+        drv.move_to_text_end();
+        drv.backdelete();
+        assert_eq!(
+            editor.raw_text(),
+            *expected,
+            "backdelete from end of {text:?}"
+        );
+    }
+}
+
+/// Forward delete removes exactly one grapheme cluster.
+#[test]
+fn editor_delete_removes_whole_grapheme() {
+    let cases: &[(&str, &str)] = &[
+        ("e\u{301}a", "a"),
+        ("👨‍👩‍👧‍👦a", "a"),
+        ("🇦🇺a", "a"),
+        ("\r\na", "a"),
+        ("ba", "a"),
+    ];
+    for (text, expected) in cases {
+        let mut env = TestEnv::new(test_name!(), None);
+        let mut editor = env.editor(text);
+        let mut drv = env.driver(&mut editor);
+        drv.move_to_text_start();
+        drv.delete();
+        assert_eq!(
+            editor.raw_text(),
+            *expected,
+            "delete from start of {text:?}"
+        );
+    }
+}
