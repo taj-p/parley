@@ -216,7 +216,8 @@ pub(crate) fn render_to_pixmap(mut renderer: RenderContext) -> Pixmap {
 pub(crate) fn draw_layout_with_clusters(
     config: &RenderingConfig,
     layout: &Layout<ColorBrush>,
-    char_layouts: &HashMap<char, Layout<ColorBrush>>,
+    text: &str,
+    cluster_layouts: &HashMap<String, Layout<ColorBrush>>,
 ) -> RenderContext {
     let padding = 20;
     let line_extra_spacing = 60.0; // Extra space between lines for cluster info
@@ -290,17 +291,7 @@ pub(crate) fn draw_layout_with_clusters(
 
                 for cluster in run.visual_clusters() {
                     let cluster_width = cluster.advance();
-
-                    // Use the test-specific methods we added to Cluster
-                    let source_char = cluster.source_char();
-                    let expected_len = source_char.len_utf8() as u8;
-                    let actual_len = cluster.text_len();
-
-                    assert_eq!(
-                        expected_len, actual_len,
-                        "Cluster text_len mismatch for '{}': expected {}, got {}",
-                        source_char, expected_len, actual_len
-                    );
+                    let cluster_text = &text[cluster.text_range()];
 
                     // Draw measurement line
                     let measure_y = line_y as f64 + measurement_line_height + fpadding;
@@ -334,16 +325,16 @@ pub(crate) fn draw_layout_with_clusters(
                         measure_y + TICK_HEIGHT,
                     );
 
-                    // Render the character (skip whitespace and control characters)
-                    match source_char {
-                        ' ' | '\n' | '\t' => {
+                    // Render the cluster text (skip whitespace and control characters)
+                    match cluster_text {
+                        " " | "\n" | "\t" => {
                             // Skip rendering whitespace
                         }
                         _ => {
-                            // Draw the cluster's character glyphs under the measurement line (these
-                            // should appear to be the same as the character in the source text).
-                            let char_layout = char_layouts.get(&source_char).unwrap();
-                            let line = char_layout.lines().next().unwrap();
+                            // Draw the cluster's glyphs under the measurement line (these
+                            // should appear to be the same as the cluster in the source text).
+                            let cluster_layout = cluster_layouts.get(cluster_text).unwrap();
+                            let line = cluster_layout.lines().next().unwrap();
                             let item = line.items().next().unwrap();
                             let glyph_run = match item {
                                 PositionedLayoutItem::GlyphRun(glyph_run) => glyph_run,

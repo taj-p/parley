@@ -448,7 +448,7 @@ impl<'a, B: Brush> Cluster<'a, B> {
     ///
     /// This is only used for tests, and is *not* part of the public API.
     #[doc(hidden)]
-    pub fn text_len(&self) -> u8 {
+    pub fn text_len(&self) -> u16 {
         self.data.text_len
     }
 

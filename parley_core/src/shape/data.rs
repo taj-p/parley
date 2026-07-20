@@ -9,13 +9,13 @@ use crate::{Boundary, shape::Whitespace};
 pub struct ClusterData {
     pub info: ClusterInfo,
     /// Cluster flags (see impl methods for details).
-    pub flags: u16,
+    pub flags: u8,
     /// Style index for this cluster.
     pub style_index: u16,
     /// Number of glyphs in this cluster (0xFF = single glyph stored inline)
     pub glyph_len: u8,
     /// Number of text bytes in this cluster
-    pub text_len: u8,
+    pub text_len: u16,
     /// If `glyph_len == 0xFF`, then `glyph_offset` is a glyph identifier,
     /// otherwise, it's an offset into the glyph array with the base
     /// taken from the owning run.
@@ -26,9 +26,15 @@ pub struct ClusterData {
     pub advance: f32,
 }
 
+// Keep `ClusterData` compact: layouts store one instance per cluster.
+const _: () = assert!(
+    size_of::<ClusterData>() == 24,
+    "ClusterData should stay 24 bytes"
+);
+
 impl ClusterData {
-    pub const LIGATURE_START: u16 = 1;
-    pub const LIGATURE_COMPONENT: u16 = 2;
+    pub const LIGATURE_START: u8 = 1;
+    pub const LIGATURE_COMPONENT: u8 = 2;
 
     #[inline(always)]
     pub fn is_ligature_start(self) -> bool {
@@ -44,15 +50,20 @@ impl ClusterData {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ClusterInfo {
     boundary: Boundary,
+    /// The first character of the cluster's source text.
     source_char: char,
+    flags: u8,
 }
 
 impl ClusterInfo {
+    const IS_EMOJI: u8 = 1;
+
     #[inline(always)]
-    pub fn new(boundary: Boundary, source_char: char) -> Self {
+    pub fn new(boundary: Boundary, source_char: char, is_emoji: bool) -> Self {
         Self {
             boundary,
             source_char,
+            flags: (is_emoji as u8) * Self::IS_EMOJI,
         }
     }
 
@@ -77,8 +88,7 @@ impl ClusterInfo {
     /// Returns if the cluster is an emoji.
     #[inline]
     pub fn is_emoji(self) -> bool {
-        // TODO: Defer to ICU4X properties (see: https://docs.rs/icu/latest/icu/properties/props/struct.Emoji.html).
-        matches!(self.source_char as u32, 0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF | 0x2600..=0x26FF | 0x2700..=0x27BF)
+        self.flags & Self::IS_EMOJI != 0
     }
 
     /// Returns if the cluster is any whitespace.

@@ -806,7 +806,7 @@ enum ClusterType {
     Newline,
 }
 
-impl From<&ClusterType> for u16 {
+impl From<&ClusterType> for u8 {
     fn from(cluster_type: &ClusterType) -> Self {
         match cluster_type {
             ClusterType::LigatureStart => ClusterData::LIGATURE_START,
@@ -851,12 +851,13 @@ fn push_cluster(
         }
     };
 
+    let is_emoji = char_info.0.is_emoji_or_pictograph() || char_info.0.is_region_indicator();
     clusters.push(ClusterData {
-        info: ClusterInfo::new(char_info.0.boundary, cluster_start_char.1),
+        info: ClusterInfo::new(char_info.0.boundary, cluster_start_char.1, is_emoji),
         flags: (&cluster_type).into(),
         style_index: char_info.1,
         glyph_len: final_glyph_len,
-        text_len: cluster_start_char.1.len_utf8() as u8,
+        text_len: cluster_start_char.1.len_utf8() as u16,
         glyph_offset: final_glyph_offset,
         text_offset: cluster_start_char.0 as u16,
         advance: final_advance,
